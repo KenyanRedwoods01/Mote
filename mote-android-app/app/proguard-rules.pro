@@ -1,0 +1,3 @@
+-keepattributes *Annotation*
+-keep class com.mote.app.ai.** { *; }
+-keep class com.mote.app.model.** { *; }

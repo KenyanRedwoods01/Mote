@@ -1,0 +1,2202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mote — Interactive Android UI Flows &amp; Device Mockup Showcase</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --navy: #0B0D1D;
+  --navy-soft: #171A30;
+  --white: #FFFFFF;
+  --surface: #F4F6F9;
+  --border: #E2E8F0;
+  --ink: #0F172A;
+  --ink2: #475569;
+  --emerald: #059669;
+  --emerald-bg: #ECFDF5;
+  --emerald-text: #065F46;
+  --cobalt: #1D4ED8;
+  --cobalt-bg: #EFF6FF;
+  --cobalt-text: #1E3A8A;
+  --danger: #DC2626;
+  --danger-bg: #FEF2F2;
+  --amber: #D97706;
+  --amber-bg: #FFFBEB;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #F1F5F9;
+  color: var(--ink);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Top Studio Header */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.brand-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-pill {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.top-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ctrl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--white);
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.ctrl-btn:hover {
+  border-color: var(--navy);
+}
+
+.ctrl-btn.active {
+  background: var(--navy);
+  color: var(--white);
+  border-color: var(--navy);
+}
+
+.ctrl-btn.airplane-on {
+  background: var(--emerald-bg);
+  color: var(--emerald-text);
+  border-color: var(--emerald);
+}
+
+/* Main Workspace Layout */
+.workspace {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+  display: grid;
+  grid-template-columns: 270px minmax(320px, 410px) 1fr;
+  gap: 28px;
+  align-items: start;
+}
+
+@media (max-width: 1080px) {
+  .workspace {
+    grid-template-columns: 240px 1fr;
+  }
+  .spec-col {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  .workspace {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+  .flow-rail, .spec-col {
+    width: 100%;
+  }
+}
+
+/* Left Flow Rail */
+.flow-rail {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 14px;
+}
+
+.rail-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink2);
+  padding: 4px 10px 10px;
+}
+
+.flow-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.flow-step {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink2);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.flow-step:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.flow-step.active {
+  background: var(--navy);
+  color: var(--white);
+  font-weight: 600;
+}
+
+.step-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  opacity: 0.72;
+  min-width: 20px;
+}
+
+/* Realistic Android Device Mockup */
+.phone-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.android-device {
+  position: relative;
+  width: 344px;
+  max-width: 100%;
+  height: 716px;
+  background: #11131C;
+  border-radius: 50px;
+  padding: 12px;
+  box-shadow:
+    0 28px 60px rgba(11, 13, 29, 0.24),
+    0 4px 12px rgba(11, 13, 29, 0.12),
+    inset 0 0 0 2px #2B3044,
+    inset 0 0 0 4px #090A10;
+}
+
+/* Hardware side buttons */
+.android-device::before {
+  content: "";
+  position: absolute;
+  right: -4px;
+  top: 148px;
+  width: 4px;
+  height: 52px;
+  background: #2A2E42;
+  border-radius: 0 3px 3px 0;
+}
+.android-device::after {
+  content: "";
+  position: absolute;
+  right: -4px;
+  top: 218px;
+  width: 4px;
+  height: 92px;
+  background: #2A2E42;
+  border-radius: 0 3px 3px 0;
+}
+
+.phone-screen {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: var(--white);
+  border-radius: 39px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Punch-hole camera */
+.camera-punch {
+  position: absolute;
+  top: 11px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #090A10;
+  box-shadow: inset 0 0 0 2px #1E2233;
+  z-index: 30;
+  pointer-events: none;
+}
+
+/* Android Status Bar */
+.status-bar {
+  height: 36px;
+  padding: 0 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  font-weight: 600;
+  z-index: 25;
+  flex-shrink: 0;
+  transition: color 0.2s, background 0.2s;
+}
+
+.status-bar.dark {
+  color: var(--white);
+  background: transparent;
+}
+
+.status-bar.light {
+  color: var(--ink);
+  background: transparent;
+}
+
+.status-icons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Screen Body */
+.screen-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+  scrollbar-width: none;
+}
+.screen-body::-webkit-scrollbar { display: none; }
+
+/* Android Gesture Pill */
+.gesture-bar {
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  z-index: 25;
+}
+.gesture-pill {
+  width: 104px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.28);
+}
+.gesture-bar.dark .gesture-pill {
+  background: rgba(255, 255, 255, 0.36);
+}
+
+/* Screen Brightness Dimmer (controlled by GenUI slider!) */
+.brightness-veil {
+  position: absolute;
+  inset: 0;
+  background: #000000;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 28;
+  transition: opacity 0.12s linear;
+}
+
+/* Phone Prev/Next Nav */
+.phone-pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pager-btn {
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--white);
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pager-btn:hover { border-color: var(--navy); }
+.pager-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ink2);
+}
+
+/* Right Spec Column */
+.spec-col {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.spec-route {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--cobalt-text);
+  background: var(--cobalt-bg);
+  padding: 5px 11px;
+  border-radius: 8px;
+  width: fit-content;
+}
+
+.spec-col h2 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 22px;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.spec-col p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink2);
+}
+
+.spec-box {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.spec-box h3 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink2);
+  margin: 0 0 10px;
+}
+
+.api-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.api-chip {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--border);
+}
+
+.spec-bullets {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink2);
+}
+.spec-bullets li { margin-bottom: 6px; }
+
+/* In-Phone UI Components */
+.p-pad { padding: 14px 18px 20px; }
+.p-btn-primary {
+  width: 100%;
+  padding: 13px 16px;
+  border-radius: 14px;
+  border: none;
+  background: var(--navy);
+  color: var(--white);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.p-btn-primary:hover { background: #191D38; }
+.p-btn-ghost {
+  width: 100%;
+  padding: 11px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--white);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ios-screen-bg {
+  background: #F2F2F7;
+  min-height: 100%;
+}
+.ios-top-nav {
+  position: sticky;
+  top: 0;
+  z-index: 18;
+  background: rgba(242, 242, 247, 0.86);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-bottom: 0.5px solid rgba(15, 23, 42, 0.08);
+  padding: 8px 16px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ios-nav-title {
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.ios-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: rgba(255,255,255,0.85);
+  border: 0.5px solid rgba(15,23,42,0.08);
+  border-radius: 999px;
+  padding: 5px 10px 5px 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cobalt);
+  cursor: pointer;
+}
+.ios-action-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(255,255,255,0.88);
+  border: 0.5px solid rgba(15,23,42,0.08);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+}
+.ios-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748B;
+  padding: 0 4px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.p-card {
+  background: #FFFFFF;
+  border: 0.5px solid rgba(15, 23, 42, 0.07);
+  border-radius: 8px;
+  padding: 13px 15px;
+  box-shadow: 0 2px 8px rgba(11, 13, 29, 0.04);
+}
+.ios-group {
+  background: #FFFFFF;
+  border: 0.5px solid rgba(15, 23, 42, 0.07);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(11, 13, 29, 0.04);
+}
+.ios-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 14px;
+  border-bottom: 0.5px solid rgba(15, 23, 42, 0.07);
+}
+.ios-row:last-child {
+  border-bottom: none;
+}
+.ico-svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+}
+
+.p-badge-nano {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--emerald-bg);
+  color: var(--emerald-text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.p-badge-flash {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--cobalt-bg);
+  color: var(--cobalt-text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.dot-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  display: inline-block;
+}
+
+.p-bottom-nav-wrap {
+  padding: 6px 14px 4px;
+  background: linear-gradient(to top, rgba(242,242,247,0.98) 65%, rgba(242,242,247,0));
+  flex-shrink: 0;
+  z-index: 22;
+}
+.p-bottom-nav {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  align-items: center;
+  background: rgba(248, 250, 252, 0.86);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 999px;
+  padding: 5px;
+  box-shadow: 0 8px 24px rgba(11, 13, 29, 0.10), inset 0 1px 0 rgba(255,255,255,0.88);
+}
+.p-nav-pill {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: 5px;
+  width: calc((100% - 10px) / 4);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 3px 10px rgba(11, 13, 29, 0.12), 0 1px 2px rgba(11, 13, 29, 0.06);
+  transform: translateX(calc(var(--tab-index, 0) * 100%));
+  transition: transform 0.36s cubic-bezier(0.32, 1.25, 0.45, 1);
+  pointer-events: none;
+  z-index: 1;
+}
+.p-nav-item {
+  position: relative;
+  z-index: 2;
+  border: none;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #64748B;
+  cursor: pointer;
+  padding: 6px 4px;
+  border-radius: 999px;
+  transition: color 0.24s ease, transform 0.22s cubic-bezier(0.32, 1.25, 0.45, 1);
+}
+.p-nav-item:active {
+  transform: scale(0.92);
+}
+.p-nav-item svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.28s cubic-bezier(0.32, 1.25, 0.45, 1), stroke-width 0.2s ease;
+}
+.p-nav-item.active {
+  color: var(--navy);
+}
+.p-nav-item.active svg {
+  stroke-width: 2.25;
+  transform: translateY(-1.5px) scale(1.1);
+}
+@keyframes screenPushIn {
+  from { opacity: 0; transform: translate3d(26px, 0, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes screenPopIn {
+  from { opacity: 0; transform: translate3d(-26px, 0, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes screenSheetUp {
+  from { opacity: 0; transform: translate3d(0, 28px, 0) scale(0.985); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes screenTabCross {
+  from { opacity: 0; transform: translate3d(0, 6px, 0) scale(0.992); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes toastPopUp {
+  from { opacity: 0; transform: translate3d(0, 14px, 0) scale(0.96); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+.screen-push  { animation: screenPushIn 0.34s cubic-bezier(0.22, 1, 0.36, 1); will-change: transform, opacity; }
+.screen-pop   { animation: screenPopIn 0.34s cubic-bezier(0.22, 1, 0.36, 1); will-change: transform, opacity; }
+.screen-sheet { animation: screenSheetUp 0.38s cubic-bezier(0.22, 1, 0.36, 1); will-change: transform, opacity; }
+.screen-tab   { animation: screenTabCross 0.28s cubic-bezier(0.22, 1, 0.36, 1); will-change: transform, opacity; }
+.p-toast      { animation: toastPopUp 0.3s cubic-bezier(0.32, 1.25, 0.45, 1); will-change: transform, opacity; }
+.p-btn-primary, .p-btn-ghost, .ios-back-btn, .ios-action-pill, .ctrl-btn, .pager-btn {
+  transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.p-btn-primary:active, .p-btn-ghost:active, .ios-back-btn:active, .ios-action-pill:active, .ctrl-btn:active, .pager-btn:active {
+  transform: scale(0.965);
+}
+.phone-screen {
+  transition: background-color 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.spec-col {
+  transition: opacity 0.22s ease;
+}
+
+/* Toggle switch inside phone */
+.sw {
+  position: relative;
+  width: 46px;
+  height: 26px;
+  border-radius: 999px;
+  background: #D1D5DB;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.3s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s ease;
+  flex-shrink: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+.sw::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #FFFFFF;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22), 0 0 1px rgba(0, 0, 0, 0.12);
+  transform: translate3d(0, 0, 0);
+  transition: transform 0.36s cubic-bezier(0.34, 1.38, 0.45, 1), width 0.16s ease;
+  will-change: transform, width;
+}
+.sw:active::after {
+  width: 26px;
+}
+.sw.on {
+  background: #34C759;
+  box-shadow: inset 0 0 0 1px rgba(52, 199, 89, 0.2);
+}
+.sw.on.cobalt { background: var(--cobalt); }
+.sw.on::after {
+  transform: translate3d(20px, 0, 0);
+}
+.sw.on:active::after {
+  transform: translate3d(16px, 0, 0);
+  width: 26px;
+}
+
+/* Floating Bot Orb */
+.floating-bot-orb {
+  position: absolute;
+  right: 10px;
+  top: 240px;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: var(--navy);
+  color: var(--white);
+  border: 2.5px solid rgba(255,255,255,0.9);
+  box-shadow: 0 10px 24px rgba(11,13,29,0.34);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 20;
+  animation: bob 2.6s ease-in-out infinite;
+}
+@keyframes bob {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-5px); }
+}
+
+/* Toast inside phone */
+.p-toast {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  background: var(--navy);
+  color: var(--white);
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  z-index: 29;
+  box-shadow: 0 12px 24px rgba(11,13,29,0.3);
+}
+
+/* Gallery Mode (All 9 Screens Side-by-Side) */
+.gallery-view {
+  display: none;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 24px 20px 64px;
+}
+.gallery-view.open { display: block; }
+.workspace.hidden { display: none; }
+
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 24px;
+}
+
+.gallery-card {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  transition: transform 0.16s, border-color 0.16s;
+}
+.gallery-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--navy);
+}
+
+.mini-phone {
+  width: 240px;
+  height: 498px;
+  background: #11131C;
+  border-radius: 36px;
+  padding: 8px;
+  box-shadow: 0 14px 28px rgba(11,13,29,0.16);
+  overflow: hidden;
+  pointer-events: none;
+}
+.mini-inner {
+  width: 320px;
+  height: 692px;
+  transform: scale(0.70);
+  transform-origin: top left;
+  background: var(--white);
+  border-radius: 34px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.gallery-meta {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+}
+</style>
+</head>
+<body>
+
+<!-- Reusable SVG Brand Assets from mote-brand-pack -->
+<svg style="display:none" aria-hidden="true">
+  <symbol id="mote-primary-svg" viewBox="0 0 1172 375"><path d="M 33.50 187.00 C 31.30 188.40, 29.90 173.10, 29.00 193.00 C 28.10 212.90, 28.60 266.60, 29.00 286.50 C 29.40 306.40, 29.40 289.90, 31.00 292.50 C 32.60 295.10, 21.80 289.10, 37.00 299.50 C 52.20 309.90, 91.00 335.50, 107.00 344.50 C 123.00 353.50, 114.10 346.00, 117.00 344.50 C 119.90 343.00, 120.60 356.20, 121.50 337.00 C 122.40 317.80, 122.10 268.40, 121.50 248.50 C 120.90 228.60, 120.30 241.00, 118.50 237.50 C 116.70 234.00, 128.20 241.30, 112.50 231.00 C 96.80 220.70, 55.80 194.80, 40.00 186.00 C 24.20 177.20, 35.70 185.60, 33.50 187.00 Z M 422.00 172.00 C 419.60 170.60, 431.10 162.00, 415.50 172.00 C 399.90 182.00, 359.70 210.30, 344.00 222.00 C 328.30 233.70, 338.80 226.90, 337.00 230.50 C 335.20 234.10, 335.40 219.00, 335.00 240.00 C 334.60 261.00, 334.70 315.30, 335.00 335.50 C 335.30 355.70, 335.50 339.20, 336.50 341.00 C 337.50 342.80, 337.90 343.60, 340.00 344.50 C 342.10 345.40, 331.10 354.60, 347.00 345.50 C 362.90 336.40, 403.60 310.10, 419.50 299.00 C 435.40 287.90, 424.80 294.70, 426.50 290.00 C 428.20 285.30, 427.80 297.70, 428.00 275.50 C 428.20 253.30, 428.70 199.70, 427.50 179.00 C 426.30 158.30, 424.40 173.40, 422.00 172.00 Z M 1060.50 141.00 C 1052.30 141.40, 1053.10 141.80, 1047.00 144.00 C 1040.90 146.20, 1036.20 148.00, 1030.00 152.00 C 1023.80 156.00, 1020.60 159.10, 1016.00 164.00 C 1011.40 168.90, 1010.40 169.30, 1007.00 176.50 C 1003.60 183.70, 1000.80 191.50, 999.00 200.00 C 997.20 208.50, 997.80 212.50, 998.00 219.00 C 998.20 225.50, 998.80 227.40, 1000.00 232.50 C 1001.20 237.60, 1001.60 239.40, 1004.00 244.50 C 1006.40 249.60, 1008.70 253.40, 1012.00 258.00 C 1015.30 262.60, 1016.00 263.60, 1020.50 267.50 C 1025.00 271.40, 1029.40 274.50, 1034.50 277.50 C 1039.60 280.50, 1039.80 280.70, 1046.00 282.50 C 1052.20 284.30, 1056.10 286.10, 1065.50 286.50 C 1074.90 286.90, 1084.60 285.90, 1093.00 284.50 C 1101.40 283.10, 1102.20 281.90, 1107.50 279.50 C 1112.80 277.10, 1114.50 276.50, 1119.50 272.50 C 1124.50 268.50, 1129.50 263.40, 1132.50 259.50 C 1135.50 255.60, 1134.10 254.30, 1134.50 253.00 C 1128.40 249.80, 1110.90 240.20, 1104.00 237.00 C 1097.10 233.80, 1102.00 235.80, 1100.00 237.00 C 1098.00 238.20, 1097.10 240.80, 1094.00 243.00 C 1090.90 245.20, 1088.60 246.70, 1084.50 248.00 C 1080.40 249.30, 1078.10 249.50, 1073.50 249.50 C 1068.90 249.50, 1066.50 249.90, 1061.50 248.00 C 1056.50 246.10, 1051.90 242.70, 1048.50 240.00 C 1045.10 237.30, 1045.70 236.90, 1044.50 234.50 C 1043.30 232.10, 1042.90 229.30, 1042.50 228.00 C 1062.00 227.90, 1119.90 228.40, 1140.00 227.50 C 1160.10 226.60, 1142.40 227.60, 1143.00 223.50 C 1143.60 219.40, 1143.50 213.40, 1143.00 207.00 C 1142.50 200.60, 1142.40 197.90, 1140.50 191.50 C 1138.60 185.10, 1136.00 179.90, 1133.50 175.00 C 1131.00 170.10, 1131.00 170.60, 1128.00 167.00 C 1125.00 163.40, 1122.40 160.40, 1118.50 157.00 C 1114.60 153.60, 1114.60 153.00, 1108.50 150.00 C 1102.40 147.00, 1097.60 143.80, 1088.00 142.00 C 1078.40 140.20, 1068.70 140.60, 1060.50 141.00 Z M 1042.50 195.50 C 1043.40 193.30, 1045.30 189.40, 1047.50 186.50 C 1049.70 183.60, 1050.30 183.00, 1053.50 181.00 C 1056.70 179.00, 1059.30 177.50, 1063.50 176.50 C 1067.70 175.50, 1070.80 175.80, 1074.50 176.00 C 1078.20 176.20, 1078.70 176.20, 1082.00 177.50 C 1085.30 178.80, 1088.00 180.10, 1091.00 182.50 C 1094.00 184.90, 1095.30 186.60, 1097.00 189.50 C 1098.70 192.40, 1099.00 195.50, 1099.50 197.00 C 1088.20 197.10, 1054.30 197.40, 1043.00 197.50 C 1042.90 197.10, 1041.60 197.70, 1042.50 195.50 Z M 794.00 141.00 C 785.10 141.60, 783.70 143.00, 778.00 145.00 C 772.30 147.00, 770.60 147.80, 765.50 151.00 C 760.40 154.20, 756.80 157.00, 752.50 161.00 C 748.20 165.00, 747.10 166.60, 744.00 171.00 C 740.90 175.40, 739.40 177.40, 737.00 183.00 C 734.60 188.60, 733.00 190.00, 732.00 199.00 C 731.00 208.00, 731.20 219.50, 732.00 228.00 C 732.80 236.50, 733.60 235.90, 736.00 241.50 C 738.40 247.10, 740.10 250.60, 744.00 256.00 C 747.90 261.40, 751.00 264.40, 755.50 268.50 C 760.00 272.60, 759.50 273.10, 766.50 276.50 C 773.50 279.90, 779.80 283.70, 790.50 285.50 C 801.20 287.30, 809.60 287.10, 820.00 285.50 C 830.40 283.90, 835.70 280.70, 842.50 277.50 C 849.30 274.30, 849.20 273.80, 854.00 269.50 C 858.80 265.20, 862.60 261.10, 866.50 256.00 C 870.40 250.90, 871.10 249.60, 873.50 244.00 C 875.90 238.40, 877.50 236.80, 878.50 228.00 C 879.50 219.20, 879.10 207.90, 878.50 200.00 C 877.90 192.10, 877.30 193.40, 875.50 188.50 C 873.70 183.60, 871.90 179.80, 869.50 175.50 C 867.10 171.20, 867.20 171.10, 863.50 167.00 C 859.80 162.90, 856.20 159.00, 851.00 155.00 C 845.80 151.00, 843.20 149.60, 837.50 147.00 C 831.80 144.40, 831.20 143.20, 822.50 142.00 C 813.80 140.80, 802.90 140.40, 794.00 141.00 Z M 801.50 180.00 C 805.60 179.60, 808.10 179.40, 812.50 180.50 C 816.90 181.60, 819.60 182.70, 823.50 185.50 C 827.40 188.30, 829.30 190.00, 832.00 194.50 C 834.70 199.00, 836.00 203.10, 837.00 208.00 C 838.00 212.90, 838.10 214.00, 837.00 219.00 C 835.90 224.00, 834.70 228.20, 831.50 233.00 C 828.30 237.80, 825.50 240.20, 821.00 243.00 C 816.50 245.80, 813.90 246.40, 809.00 247.00 C 804.10 247.60, 801.00 247.20, 796.50 246.00 C 792.00 244.80, 790.30 244.00, 786.50 241.00 C 782.70 238.00, 780.10 235.20, 777.50 231.00 C 774.90 226.80, 774.10 225.60, 773.50 220.00 C 772.90 214.40, 773.10 208.70, 774.50 203.00 C 775.90 197.30, 777.00 195.60, 780.50 191.50 C 784.00 187.40, 787.80 184.80, 792.00 182.50 C 796.20 180.20, 797.40 180.40, 801.50 180.00 Z M 426.50 134.00 C 425.60 131.10, 423.70 129.50, 422.00 128.00 C 420.30 126.50, 421.50 126.30, 418.00 126.50 C 414.50 126.70, 411.00 128.90, 404.50 129.00 C 398.00 129.10, 391.90 128.60, 385.50 127.00 C 379.10 125.40, 377.40 124.20, 372.50 121.00 C 367.60 117.80, 364.70 113.20, 361.00 111.00 C 357.30 108.80, 390.80 84.80, 354.00 110.00 C 317.20 135.20, 213.20 210.60, 177.00 237.00 C 140.80 263.40, 173.80 239.60, 173.00 242.00 C 172.20 244.40, 172.30 246.70, 173.00 249.00 C 173.70 251.30, 167.40 247.20, 176.50 253.50 C 185.60 259.80, 208.70 274.60, 218.50 280.50 C 228.30 286.40, 222.00 282.80, 225.50 283.00 C 229.00 283.20, 196.60 308.50, 236.00 281.50 C 275.40 254.50, 384.40 175.80, 422.50 148.00 C 460.60 120.20, 425.70 145.30, 426.50 142.50 C 427.30 139.70, 427.40 136.90, 426.50 134.00 Z M 949.00 104.00 C 941.60 106.00, 922.90 111.50, 915.50 114.00 C 908.10 116.50, 912.90 110.30, 912.00 116.50 C 911.10 122.70, 911.20 139.30, 911.00 145.00 C 906.40 145.20, 892.60 145.80, 888.00 146.00 C 887.90 153.00, 887.20 173.50, 887.50 181.00 C 887.80 188.50, 884.60 182.90, 889.50 183.50 C 894.40 184.10, 907.50 183.90, 912.00 184.00 C 912.00 196.00, 911.40 229.20, 912.00 244.00 C 912.60 258.80, 913.20 253.00, 915.00 258.00 C 916.80 263.00, 918.20 265.30, 921.00 269.00 C 923.80 272.70, 924.60 273.80, 929.00 276.50 C 933.40 279.20, 938.00 281.00, 943.00 282.50 C 948.00 284.00, 946.50 283.90, 954.00 284.00 C 961.50 284.10, 974.20 283.70, 980.50 283.00 C 986.80 282.30, 984.50 287.80, 985.50 280.50 C 986.50 273.20, 986.00 253.70, 985.50 246.50 C 985.00 239.30, 987.20 244.60, 983.00 244.50 C 978.80 244.40, 969.20 246.10, 964.50 246.00 C 959.80 245.90, 961.30 245.30, 959.50 244.00 C 957.70 242.70, 956.50 251.50, 955.50 239.50 C 954.50 227.50, 954.70 195.10, 954.50 184.00 C 960.30 183.90, 977.40 183.90, 983.50 183.50 C 989.60 183.10, 984.60 189.10, 985.00 182.00 C 985.40 174.90, 985.80 155.40, 985.50 148.00 C 985.20 140.60, 989.70 145.80, 983.50 145.00 C 977.30 144.20, 960.30 144.20, 954.50 144.00 C 954.50 136.40, 954.90 114.00, 954.50 106.00 C 954.10 98.00, 953.60 104.40, 952.50 104.00 C 951.40 103.60, 956.40 102.00, 949.00 104.00 Z M 510.00 91.50 C 509.30 129.60, 509.10 241.30, 509.50 279.50 C 509.90 317.70, 503.80 281.80, 512.00 282.50 C 520.20 283.20, 542.00 283.60, 550.50 283.00 C 559.00 282.40, 553.60 302.00, 554.50 279.50 C 555.40 257.00, 554.90 192.30, 555.00 170.50 C 564.20 185.70, 591.30 230.90, 601.00 246.50 C 610.70 262.10, 600.70 248.10, 603.50 248.50 C 606.30 248.90, 612.00 249.20, 615.00 248.50 C 618.00 247.80, 608.80 260.70, 618.50 245.00 C 628.20 229.30, 654.50 185.00, 663.50 170.00 C 663.60 192.00, 663.10 257.40, 664.00 280.00 C 664.90 302.60, 659.80 282.40, 668.00 283.00 C 676.20 283.60, 697.00 283.40, 705.00 283.00 C 713.00 282.60, 707.30 319.20, 708.00 281.00 C 708.70 242.80, 708.70 130.20, 708.50 92.00 C 708.30 53.80, 715.50 90.60, 707.00 90.00 C 698.50 89.40, 675.20 88.60, 666.00 89.00 C 656.80 89.40, 672.40 74.20, 661.00 92.00 C 649.60 109.80, 619.40 160.80, 609.00 178.00 C 598.40 160.60, 567.50 108.80, 556.00 91.00 C 544.50 73.20, 560.10 89.40, 551.50 89.00 C 542.90 88.60, 521.30 88.50, 513.00 89.00 C 504.70 89.50, 510.70 53.40, 510.00 91.50 Z M 30.00 84.00 C 28.70 98.70, 28.40 137.00, 29.00 152.50 C 29.60 168.00, 30.60 158.30, 33.00 161.50 C 35.40 164.70, 19.00 154.30, 41.00 168.50 C 63.00 182.70, 120.30 219.30, 143.00 232.50 C 165.70 245.70, 150.70 234.70, 154.50 234.50 C 158.30 234.30, 150.00 239.90, 162.00 231.50 C 174.00 223.10, 203.90 200.90, 214.50 192.50 C 225.10 184.10, 215.60 190.80, 215.00 189.50 C 214.40 188.20, 245.80 207.90, 211.50 186.00 C 177.20 164.10, 78.70 101.40, 43.50 80.00 C 8.30 58.60, 38.20 78.20, 35.50 79.00 C 32.80 79.80, 31.30 69.30, 30.00 84.00 Z M 395.00 42.00 C 389.70 42.60, 387.70 43.00, 383.00 46.00 C 378.30 49.00, 374.90 52.10, 371.50 57.00 C 368.10 61.90, 367.10 65.60, 366.00 70.50 C 364.90 75.40, 364.90 76.50, 366.00 81.50 C 367.10 86.50, 368.70 90.90, 371.50 95.50 C 374.30 100.10, 375.60 101.50, 380.00 104.50 C 384.40 107.50, 388.10 109.30, 393.50 110.50 C 398.90 111.70, 401.40 111.90, 407.00 110.50 C 412.60 109.10, 417.00 106.70, 421.50 103.50 C 426.00 100.30, 426.90 99.60, 429.50 94.50 C 432.10 89.40, 433.70 83.30, 434.50 78.00 C 435.30 72.70, 434.50 71.90, 433.50 68.00 C 432.50 64.10, 432.10 62.40, 429.50 58.50 C 426.90 54.60, 424.50 51.60, 420.50 48.50 C 416.50 45.40, 414.60 44.30, 409.50 43.00 C 404.40 41.70, 400.30 41.40, 395.00 42.00 Z M 42.00 57.50 C 42.10 59.60, 41.90 59.20, 43.50 61.00 C 45.10 62.80, 15.10 44.00, 50.00 66.50 C 84.90 89.00, 182.80 151.50, 218.00 173.50 C 253.20 195.50, 223.40 175.90, 226.00 176.50 C 228.60 177.10, 227.50 177.70, 231.00 176.50 C 234.50 175.30, 221.40 185.70, 243.50 170.50 C 265.60 155.30, 320.50 115.80, 341.50 100.50 C 362.50 85.20, 346.80 96.00, 348.50 94.00 C 350.20 92.00, 350.00 95.70, 350.00 90.50 C 350.00 85.30, 348.20 74.70, 348.50 68.00 C 348.80 61.30, 349.50 61.60, 351.50 57.00 C 353.50 52.40, 356.90 48.50, 358.50 45.00 C 360.10 41.50, 360.00 41.50, 359.50 39.50 C 359.00 37.50, 359.30 37.10, 356.00 35.00 C 352.70 32.90, 348.30 30.20, 343.00 29.00 C 337.70 27.80, 350.20 18.20, 329.50 29.00 C 308.80 39.80, 259.30 71.50, 239.50 83.00 C 219.70 94.50, 234.20 86.10, 230.50 86.50 C 226.80 86.90, 240.60 96.10, 221.00 85.00 C 201.40 73.90, 151.70 42.40, 132.50 31.00 C 113.30 19.60, 128.00 28.60, 125.00 28.00 C 122.00 27.40, 133.00 24.40, 117.50 28.00 C 102.00 31.60, 62.40 41.50, 47.50 46.00 C 32.60 50.50, 44.10 48.20, 43.00 50.50 C 41.90 52.80, 41.90 55.40, 42.00 57.50 Z" fill="currentColor" fill-rule="evenodd"/></symbol>
+  <symbol id="mote-icon-svg" viewBox="0 0 455 367"><path d="M 29.50 183.00 C 27.30 184.40, 25.90 169.10, 25.00 189.00 C 24.10 208.90, 24.60 262.60, 25.00 282.50 C 25.40 302.40, 25.40 285.90, 27.00 288.50 C 28.60 291.10, 17.80 285.10, 33.00 295.50 C 48.20 305.90, 87.00 331.50, 103.00 340.50 C 119.00 349.50, 110.10 342.00, 113.00 340.50 C 115.90 339.00, 116.60 352.20, 117.50 333.00 C 118.40 313.80, 118.10 264.40, 117.50 244.50 C 116.90 224.60, 116.30 237.00, 114.50 233.50 C 112.70 230.00, 124.20 237.30, 108.50 227.00 C 92.80 216.70, 51.80 190.80, 36.00 182.00 C 20.20 173.20, 31.70 181.60, 29.50 183.00 Z M 418.00 168.00 C 415.60 166.60, 427.10 158.00, 411.50 168.00 C 395.90 178.00, 355.70 206.30, 340.00 218.00 C 324.30 229.70, 334.80 222.90, 333.00 226.50 C 331.20 230.10, 331.40 215.00, 331.00 236.00 C 330.60 257.00, 330.70 311.30, 331.00 331.50 C 331.30 351.70, 331.50 335.20, 332.50 337.00 C 333.50 338.80, 333.90 339.60, 336.00 340.50 C 338.10 341.40, 327.10 350.60, 343.00 341.50 C 358.90 332.40, 399.60 306.10, 415.50 295.00 C 431.40 283.90, 420.80 290.70, 422.50 286.00 C 424.20 281.30, 423.80 293.70, 424.00 271.50 C 424.20 249.30, 424.70 195.70, 423.50 175.00 C 422.30 154.30, 420.40 169.40, 418.00 168.00 Z M 422.50 130.00 C 421.60 127.10, 419.70 125.50, 418.00 124.00 C 416.30 122.50, 417.50 122.30, 414.00 122.50 C 410.50 122.70, 407.00 124.90, 400.50 125.00 C 394.00 125.10, 387.90 124.60, 381.50 123.00 C 375.10 121.40, 373.40 120.20, 368.50 117.00 C 363.60 113.80, 360.70 109.20, 357.00 107.00 C 353.30 104.80, 386.80 80.80, 350.00 106.00 C 313.20 131.20, 209.20 206.60, 173.00 233.00 C 136.80 259.40, 169.80 235.60, 169.00 238.00 C 168.20 240.40, 168.30 242.70, 169.00 245.00 C 169.70 247.30, 163.40 243.20, 172.50 249.50 C 181.60 255.80, 204.70 270.60, 214.50 276.50 C 224.30 282.40, 218.00 278.80, 221.50 279.00 C 225.00 279.20, 192.60 304.50, 232.00 277.50 C 271.40 250.50, 380.40 171.80, 418.50 144.00 C 456.60 116.20, 421.70 141.30, 422.50 138.50 C 423.30 135.70, 423.40 132.90, 422.50 130.00 Z M 26.00 80.00 C 24.70 94.70, 24.40 133.00, 25.00 148.50 C 25.60 164.00, 26.60 154.30, 29.00 157.50 C 31.40 160.70, 15.00 150.30, 37.00 164.50 C 59.00 178.70, 116.30 215.30, 139.00 228.50 C 161.70 241.70, 146.70 230.70, 150.50 230.50 C 154.30 230.30, 146.00 235.90, 158.00 227.50 C 170.00 219.10, 199.90 196.90, 210.50 188.50 C 221.10 180.10, 211.60 186.80, 211.00 185.50 C 210.40 184.20, 241.80 203.90, 207.50 182.00 C 173.20 160.10, 74.70 97.40, 39.50 76.00 C 4.30 54.60, 34.20 74.20, 31.50 75.00 C 28.80 75.80, 27.30 65.30, 26.00 80.00 Z M 391.00 38.00 C 385.70 38.60, 383.70 39.00, 379.00 42.00 C 374.30 45.00, 370.90 48.10, 367.50 53.00 C 364.10 57.90, 363.10 61.60, 362.00 66.50 C 360.90 71.40, 360.90 72.50, 362.00 77.50 C 363.10 82.50, 364.70 86.90, 367.50 91.50 C 370.30 96.10, 371.60 97.50, 376.00 100.50 C 380.40 103.50, 384.10 105.30, 389.50 106.50 C 394.90 107.70, 397.40 107.90, 403.00 106.50 C 408.60 105.10, 413.00 102.70, 417.50 99.50 C 422.00 96.30, 422.90 95.60, 425.50 90.50 C 428.10 85.40, 429.70 79.30, 430.50 74.00 C 431.30 68.70, 430.50 67.90, 429.50 64.00 C 428.50 60.10, 428.10 58.40, 425.50 54.50 C 422.90 50.60, 420.50 47.60, 416.50 44.50 C 412.50 41.40, 410.60 40.30, 405.50 39.00 C 400.40 37.70, 396.30 37.40, 391.00 38.00 Z M 38.00 53.50 C 38.10 55.60, 37.90 55.20, 39.50 57.00 C 41.10 58.80, 11.10 40.00, 46.00 62.50 C 80.90 85.00, 178.80 147.50, 214.00 169.50 C 249.20 191.50, 219.40 171.90, 222.00 172.50 C 224.60 173.10, 223.50 173.70, 227.00 172.50 C 230.50 171.30, 217.40 181.70, 239.50 166.50 C 261.60 151.30, 316.50 111.80, 337.50 96.50 C 358.50 81.20, 342.80 92.00, 344.50 90.00 C 346.20 88.00, 346.00 91.70, 346.00 86.50 C 346.00 81.30, 344.20 70.70, 344.50 64.00 C 344.80 57.30, 345.50 57.60, 347.50 53.00 C 349.50 48.40, 352.90 44.50, 354.50 41.00 C 356.10 37.50, 356.00 37.50, 355.50 35.50 C 355.00 33.50, 355.30 33.10, 352.00 31.00 C 348.70 28.90, 344.30 26.20, 339.00 25.00 C 333.70 23.80, 346.20 14.20, 325.50 25.00 C 304.80 35.80, 255.30 67.50, 235.50 79.00 C 215.70 90.50, 230.20 82.10, 226.50 82.50 C 222.80 82.90, 236.60 92.10, 217.00 81.00 C 197.40 69.90, 147.70 38.40, 128.50 27.00 C 109.30 15.60, 124.00 24.60, 121.00 24.00 C 118.00 23.40, 129.00 20.40, 113.50 24.00 C 98.00 27.60, 58.40 37.50, 43.50 42.00 C 28.60 46.50, 40.10 44.20, 39.00 46.50 C 37.90 48.80, 37.90 51.40, 38.00 53.50 Z" fill="currentColor" fill-rule="evenodd"/></symbol>
+  <symbol id="mote-wordmark-svg" viewBox="0 0 683 247"><path d="M 575.50 76.00 C 567.30 76.40, 568.10 76.80, 562.00 79.00 C 555.90 81.20, 551.20 83.00, 545.00 87.00 C 538.80 91.00, 535.60 94.10, 531.00 99.00 C 526.40 103.90, 525.40 104.30, 522.00 111.50 C 518.60 118.70, 515.80 126.50, 514.00 135.00 C 512.20 143.50, 512.80 147.50, 513.00 154.00 C 513.20 160.50, 513.80 162.40, 515.00 167.50 C 516.20 172.60, 516.60 174.40, 519.00 179.50 C 521.40 184.60, 523.70 188.40, 527.00 193.00 C 530.30 197.60, 531.00 198.60, 535.50 202.50 C 540.00 206.40, 544.40 209.50, 549.50 212.50 C 554.60 215.50, 554.80 215.70, 561.00 217.50 C 567.20 219.30, 571.10 221.10, 580.50 221.50 C 589.90 221.90, 599.60 220.90, 608.00 219.50 C 616.40 218.10, 617.20 216.90, 622.50 214.50 C 627.80 212.10, 629.50 211.50, 634.50 207.50 C 639.50 203.50, 644.50 198.40, 647.50 194.50 C 650.50 190.60, 649.10 189.30, 649.50 188.00 C 643.40 184.80, 625.90 175.20, 619.00 172.00 C 612.10 168.80, 617.00 170.80, 615.00 172.00 C 613.00 173.20, 612.10 175.80, 609.00 178.00 C 605.90 180.20, 603.60 181.70, 599.50 183.00 C 595.40 184.30, 593.10 184.50, 588.50 184.50 C 583.90 184.50, 581.50 184.90, 576.50 183.00 C 571.50 181.10, 566.90 177.70, 563.50 175.00 C 560.10 172.30, 560.70 171.90, 559.50 169.50 C 558.30 167.10, 557.90 164.30, 557.50 163.00 C 577.00 162.90, 634.90 163.40, 655.00 162.50 C 675.10 161.60, 657.40 162.60, 658.00 158.50 C 658.60 154.40, 658.50 148.40, 658.00 142.00 C 657.50 135.60, 657.40 132.90, 655.50 126.50 C 653.60 120.10, 651.00 114.90, 648.50 110.00 C 646.00 105.10, 646.00 105.60, 643.00 102.00 C 640.00 98.40, 637.40 95.40, 633.50 92.00 C 629.60 88.60, 629.60 88.00, 623.50 85.00 C 617.40 82.00, 612.60 78.80, 603.00 77.00 C 593.40 75.20, 583.70 75.60, 575.50 76.00 Z M 557.50 130.50 C 558.40 128.30, 560.30 124.40, 562.50 121.50 C 564.70 118.60, 565.30 118.00, 568.50 116.00 C 571.70 114.00, 574.30 112.50, 578.50 111.50 C 582.70 110.50, 585.80 110.80, 589.50 111.00 C 593.20 111.20, 593.70 111.20, 597.00 112.50 C 600.30 113.80, 603.00 115.10, 606.00 117.50 C 609.00 119.90, 610.30 121.60, 612.00 124.50 C 613.70 127.40, 614.00 130.50, 614.50 132.00 C 603.20 132.10, 569.30 132.40, 558.00 132.50 C 557.90 132.10, 556.60 132.70, 557.50 130.50 Z M 309.00 76.00 C 300.10 76.60, 298.70 78.00, 293.00 80.00 C 287.30 82.00, 285.60 82.80, 280.50 86.00 C 275.40 89.20, 271.80 92.00, 267.50 96.00 C 263.20 100.00, 262.10 101.60, 259.00 106.00 C 255.90 110.40, 254.40 112.40, 252.00 118.00 C 249.60 123.60, 248.00 125.00, 247.00 134.00 C 246.00 143.00, 246.20 154.50, 247.00 163.00 C 247.80 171.50, 248.60 170.90, 251.00 176.50 C 253.40 182.10, 255.10 185.60, 259.00 191.00 C 262.90 196.40, 266.00 199.40, 270.50 203.50 C 275.00 207.60, 274.50 208.10, 281.50 211.50 C 288.50 214.90, 294.80 218.70, 305.50 220.50 C 316.20 222.30, 324.60 222.10, 335.00 220.50 C 345.40 218.90, 350.70 215.70, 357.50 212.50 C 364.30 209.30, 364.20 208.80, 369.00 204.50 C 373.80 200.20, 377.60 196.10, 381.50 191.00 C 385.40 185.90, 386.10 184.60, 388.50 179.00 C 390.90 173.40, 392.50 171.80, 393.50 163.00 C 394.50 154.20, 394.10 142.90, 393.50 135.00 C 392.90 127.10, 392.30 128.40, 390.50 123.50 C 388.70 118.60, 386.90 114.80, 384.50 110.50 C 382.10 106.20, 382.20 106.10, 378.50 102.00 C 374.80 97.90, 371.20 94.00, 366.00 90.00 C 360.80 86.00, 358.20 84.60, 352.50 82.00 C 346.80 79.40, 346.20 78.20, 337.50 77.00 C 328.80 75.80, 317.90 75.40, 309.00 76.00 Z M 316.50 115.00 C 320.60 114.60, 323.10 114.40, 327.50 115.50 C 331.90 116.60, 334.60 117.70, 338.50 120.50 C 342.40 123.30, 344.30 125.00, 347.00 129.50 C 349.70 134.00, 351.00 138.10, 352.00 143.00 C 353.00 147.90, 353.10 149.00, 352.00 154.00 C 350.90 159.00, 349.70 163.20, 346.50 168.00 C 343.30 172.80, 340.50 175.20, 336.00 178.00 C 331.50 180.80, 328.90 181.40, 324.00 182.00 C 319.10 182.60, 316.00 182.20, 311.50 181.00 C 307.00 179.80, 305.30 179.00, 301.50 176.00 C 297.70 173.00, 295.10 170.20, 292.50 166.00 C 289.90 161.80, 289.10 160.60, 288.50 155.00 C 287.90 149.40, 288.10 143.70, 289.50 138.00 C 290.90 132.30, 292.00 130.60, 295.50 126.50 C 299.00 122.40, 302.80 119.80, 307.00 117.50 C 311.20 115.20, 312.40 115.40, 316.50 115.00 Z M 464.00 39.00 C 456.60 41.00, 437.90 46.50, 430.50 49.00 C 423.10 51.50, 427.90 45.30, 427.00 51.50 C 426.10 57.70, 426.20 74.30, 426.00 80.00 C 421.40 80.20, 407.60 80.80, 403.00 81.00 C 402.90 88.00, 402.20 108.50, 402.50 116.00 C 402.80 123.50, 399.60 117.90, 404.50 118.50 C 409.40 119.10, 422.50 118.90, 427.00 119.00 C 427.00 131.00, 426.40 164.20, 427.00 179.00 C 427.60 193.80, 428.20 188.00, 430.00 193.00 C 431.80 198.00, 433.20 200.30, 436.00 204.00 C 438.80 207.70, 439.60 208.80, 444.00 211.50 C 448.40 214.20, 453.00 216.00, 458.00 217.50 C 463.00 219.00, 461.50 218.90, 469.00 219.00 C 476.50 219.10, 489.20 218.70, 495.50 218.00 C 501.80 217.30, 499.50 222.80, 500.50 215.50 C 501.50 208.20, 501.00 188.70, 500.50 181.50 C 500.00 174.30, 502.20 179.60, 498.00 179.50 C 493.80 179.40, 484.20 181.10, 479.50 181.00 C 474.80 180.90, 476.30 180.30, 474.50 179.00 C 472.70 177.70, 471.50 186.50, 470.50 174.50 C 469.50 162.50, 469.70 130.10, 469.50 119.00 C 475.30 118.90, 492.40 118.90, 498.50 118.50 C 504.60 118.10, 499.60 124.10, 500.00 117.00 C 500.40 109.90, 500.80 90.40, 500.50 83.00 C 500.20 75.60, 504.70 80.80, 498.50 80.00 C 492.30 79.20, 475.30 79.20, 469.50 79.00 C 469.50 71.40, 469.90 49.00, 469.50 41.00 C 469.10 33.00, 468.60 39.40, 467.50 39.00 C 466.40 38.60, 471.40 37.00, 464.00 39.00 Z M 25.00 26.50 C 24.30 64.60, 24.10 176.30, 24.50 214.50 C 24.90 252.70, 18.80 216.80, 27.00 217.50 C 35.20 218.20, 57.00 218.60, 65.50 218.00 C 74.00 217.40, 68.60 237.00, 69.50 214.50 C 70.40 192.00, 69.90 127.30, 70.00 105.50 C 79.20 120.70, 106.30 165.90, 116.00 181.50 C 125.70 197.10, 115.70 183.10, 118.50 183.50 C 121.30 183.90, 127.00 184.20, 130.00 183.50 C 133.00 182.80, 123.80 195.70, 133.50 180.00 C 143.20 164.30, 169.50 120.00, 178.50 105.00 C 178.60 127.00, 178.10 192.40, 179.00 215.00 C 179.90 237.60, 174.80 217.40, 183.00 218.00 C 191.20 218.60, 212.00 218.40, 220.00 218.00 C 228.00 217.60, 222.30 254.20, 223.00 216.00 C 223.70 177.80, 223.70 65.20, 223.50 27.00 C 223.30 -11.20, 230.50 25.60, 222.00 25.00 C 213.50 24.40, 190.20 23.60, 181.00 24.00 C 171.80 24.40, 187.40 9.20, 176.00 27.00 C 164.60 44.80, 134.40 95.80, 124.00 113.00 C 113.40 95.60, 82.50 43.80, 71.00 26.00 C 59.50 8.20, 75.10 24.40, 66.50 24.00 C 57.90 23.60, 36.30 23.50, 28.00 24.00 C 19.70 24.50, 25.70 -11.60, 25.00 26.50 Z" fill="currentColor" fill-rule="evenodd"/></symbol>
+  <symbol id="mote-app-icon-svg" viewBox="0 0 1024 1024"><rect x="32" y="32" width="960" height="960" rx="220" ry="220" fill="#0B0D1D"/>
+  <g transform="translate(192.00, 253.89) scale(1.40659)">
+    <path d="M 29.50 183.00 C 27.30 184.40, 25.90 169.10, 25.00 189.00 C 24.10 208.90, 24.60 262.60, 25.00 282.50 C 25.40 302.40, 25.40 285.90, 27.00 288.50 C 28.60 291.10, 17.80 285.10, 33.00 295.50 C 48.20 305.90, 87.00 331.50, 103.00 340.50 C 119.00 349.50, 110.10 342.00, 113.00 340.50 C 115.90 339.00, 116.60 352.20, 117.50 333.00 C 118.40 313.80, 118.10 264.40, 117.50 244.50 C 116.90 224.60, 116.30 237.00, 114.50 233.50 C 112.70 230.00, 124.20 237.30, 108.50 227.00 C 92.80 216.70, 51.80 190.80, 36.00 182.00 C 20.20 173.20, 31.70 181.60, 29.50 183.00 Z M 418.00 168.00 C 415.60 166.60, 427.10 158.00, 411.50 168.00 C 395.90 178.00, 355.70 206.30, 340.00 218.00 C 324.30 229.70, 334.80 222.90, 333.00 226.50 C 331.20 230.10, 331.40 215.00, 331.00 236.00 C 330.60 257.00, 330.70 311.30, 331.00 331.50 C 331.30 351.70, 331.50 335.20, 332.50 337.00 C 333.50 338.80, 333.90 339.60, 336.00 340.50 C 338.10 341.40, 327.10 350.60, 343.00 341.50 C 358.90 332.40, 399.60 306.10, 415.50 295.00 C 431.40 283.90, 420.80 290.70, 422.50 286.00 C 424.20 281.30, 423.80 293.70, 424.00 271.50 C 424.20 249.30, 424.70 195.70, 423.50 175.00 C 422.30 154.30, 420.40 169.40, 418.00 168.00 Z M 422.50 130.00 C 421.60 127.10, 419.70 125.50, 418.00 124.00 C 416.30 122.50, 417.50 122.30, 414.00 122.50 C 410.50 122.70, 407.00 124.90, 400.50 125.00 C 394.00 125.10, 387.90 124.60, 381.50 123.00 C 375.10 121.40, 373.40 120.20, 368.50 117.00 C 363.60 113.80, 360.70 109.20, 357.00 107.00 C 353.30 104.80, 386.80 80.80, 350.00 106.00 C 313.20 131.20, 209.20 206.60, 173.00 233.00 C 136.80 259.40, 169.80 235.60, 169.00 238.00 C 168.20 240.40, 168.30 242.70, 169.00 245.00 C 169.70 247.30, 163.40 243.20, 172.50 249.50 C 181.60 255.80, 204.70 270.60, 214.50 276.50 C 224.30 282.40, 218.00 278.80, 221.50 279.00 C 225.00 279.20, 192.60 304.50, 232.00 277.50 C 271.40 250.50, 380.40 171.80, 418.50 144.00 C 456.60 116.20, 421.70 141.30, 422.50 138.50 C 423.30 135.70, 423.40 132.90, 422.50 130.00 Z M 26.00 80.00 C 24.70 94.70, 24.40 133.00, 25.00 148.50 C 25.60 164.00, 26.60 154.30, 29.00 157.50 C 31.40 160.70, 15.00 150.30, 37.00 164.50 C 59.00 178.70, 116.30 215.30, 139.00 228.50 C 161.70 241.70, 146.70 230.70, 150.50 230.50 C 154.30 230.30, 146.00 235.90, 158.00 227.50 C 170.00 219.10, 199.90 196.90, 210.50 188.50 C 221.10 180.10, 211.60 186.80, 211.00 185.50 C 210.40 184.20, 241.80 203.90, 207.50 182.00 C 173.20 160.10, 74.70 97.40, 39.50 76.00 C 4.30 54.60, 34.20 74.20, 31.50 75.00 C 28.80 75.80, 27.30 65.30, 26.00 80.00 Z M 391.00 38.00 C 385.70 38.60, 383.70 39.00, 379.00 42.00 C 374.30 45.00, 370.90 48.10, 367.50 53.00 C 364.10 57.90, 363.10 61.60, 362.00 66.50 C 360.90 71.40, 360.90 72.50, 362.00 77.50 C 363.10 82.50, 364.70 86.90, 367.50 91.50 C 370.30 96.10, 371.60 97.50, 376.00 100.50 C 380.40 103.50, 384.10 105.30, 389.50 106.50 C 394.90 107.70, 397.40 107.90, 403.00 106.50 C 408.60 105.10, 413.00 102.70, 417.50 99.50 C 422.00 96.30, 422.90 95.60, 425.50 90.50 C 428.10 85.40, 429.70 79.30, 430.50 74.00 C 431.30 68.70, 430.50 67.90, 429.50 64.00 C 428.50 60.10, 428.10 58.40, 425.50 54.50 C 422.90 50.60, 420.50 47.60, 416.50 44.50 C 412.50 41.40, 410.60 40.30, 405.50 39.00 C 400.40 37.70, 396.30 37.40, 391.00 38.00 Z M 38.00 53.50 C 38.10 55.60, 37.90 55.20, 39.50 57.00 C 41.10 58.80, 11.10 40.00, 46.00 62.50 C 80.90 85.00, 178.80 147.50, 214.00 169.50 C 249.20 191.50, 219.40 171.90, 222.00 172.50 C 224.60 173.10, 223.50 173.70, 227.00 172.50 C 230.50 171.30, 217.40 181.70, 239.50 166.50 C 261.60 151.30, 316.50 111.80, 337.50 96.50 C 358.50 81.20, 342.80 92.00, 344.50 90.00 C 346.20 88.00, 346.00 91.70, 346.00 86.50 C 346.00 81.30, 344.20 70.70, 344.50 64.00 C 344.80 57.30, 345.50 57.60, 347.50 53.00 C 349.50 48.40, 352.90 44.50, 354.50 41.00 C 356.10 37.50, 356.00 37.50, 355.50 35.50 C 355.00 33.50, 355.30 33.10, 352.00 31.00 C 348.70 28.90, 344.30 26.20, 339.00 25.00 C 333.70 23.80, 346.20 14.20, 325.50 25.00 C 304.80 35.80, 255.30 67.50, 235.50 79.00 C 215.70 90.50, 230.20 82.10, 226.50 82.50 C 222.80 82.90, 236.60 92.10, 217.00 81.00 C 197.40 69.90, 147.70 38.40, 128.50 27.00 C 109.30 15.60, 124.00 24.60, 121.00 24.00 C 118.00 23.40, 129.00 20.40, 113.50 24.00 C 98.00 27.60, 58.40 37.50, 43.50 42.00 C 28.60 46.50, 40.10 44.20, 39.00 46.50 C 37.90 48.80, 37.90 51.40, 38.00 53.50 Z" fill="#FFFFFF" fill-rule="evenodd"/>
+  </g></symbol>
+</svg>
+
+<header class="topbar">
+  <div class="brand-group">
+    <svg width="110" height="34" style="color:#0B0D1D" aria-label="Mote Logo"><use href="#mote-primary-svg"/></svg>
+    <span class="brand-pill">#BuildHybridAI 2026 · 13 Complete Screens</span>
+  </div>
+  <div class="top-controls">
+    <button id="btn-airplane" class="ctrl-btn" type="button"><svg class="ico-svg" viewBox="0 0 24 24"><path d="M17.8 19.2L16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg><span>Airplane Mode: OFF</span></button>
+    <button id="btn-mode-interactive" class="ctrl-btn active" type="button">Interactive Phone</button>
+    <button id="btn-mode-gallery" class="ctrl-btn" type="button">All 13 Screens Gallery</button>
+  </div>
+</header>
+
+<main id="interactive-workspace" class="workspace">
+  <!-- Left: Flow Rail -->
+  <aside class="flow-rail">
+    <div class="rail-title">Complete App Flow</div>
+    <div id="flow-list" class="flow-list"></div>
+  </aside>
+
+  <!-- Center: Actual Android Device Mockup -->
+  <section class="phone-stage">
+    <div class="android-device" aria-label="Android smartphone device mockup">
+      <div class="camera-punch"></div>
+      <div id="phone-screen" class="phone-screen">
+        <div id="brightness-veil" class="brightness-veil"></div>
+        <div id="status-bar" class="status-bar light">
+          <span>03:56</span>
+          <div id="status-icons" class="status-icons"></div>
+        </div>
+        <div id="screen-body" class="screen-body"></div>
+        <div id="bottom-nav-slot"></div>
+        <div id="gesture-bar" class="gesture-bar"><div class="gesture-pill"></div></div>
+        <div id="toast-slot"></div>
+      </div>
+    </div>
+
+    <div class="phone-pager">
+      <button id="btn-prev" class="pager-btn" type="button">← Prev</button>
+      <span id="pager-label" class="pager-label">01 / 13</span>
+      <button id="btn-next" class="pager-btn" type="button">Next →</button>
+    </div>
+  </section>
+
+  <!-- Right: Contextual Screen Spec -->
+  <aside id="spec-col" class="spec-col"></aside>
+</main>
+
+<section id="gallery-view" class="gallery-view">
+  <div id="gallery-grid" class="gallery-grid"></div>
+</section>
+
+<script>
+const SCREENS = [
+  {
+    id: 'splash',
+    num: '01',
+    title: 'Splash & Warm-Up',
+    route: 'route://splash',
+    darkChrome: true,
+    summary: 'Branded Mote Navy cold launch that initializes Firebase App Check, fetches Remote Config defaults, checks Gemini Nano 4 status via AICore, and fires warmUp() for sub-second first-token speed.',
+    apis: ['Firebase.initialize()', 'App Check', 'Remote Config', 'FirebaseAIOnDevice.warmUp()'],
+    notes: [
+      'Uses the exact white Mote SVG monogram over #0B0D1D.',
+      'Pre-warms Gemini Nano 4 in memory before the user ever taps a bot.',
+      'Automatically routes new users to Auth or returning users straight to Home Hub.'
+    ]
+  },
+  {
+    id: 'auth',
+    num: '02',
+    title: 'Welcome & Sign-In',
+    route: 'route://auth',
+    darkChrome: false,
+    summary: 'Zero-friction onboarding with Google Sign-In (syncs custom bots via Firestore) and a one-tap Guest mode (Firebase Anonymous Auth) so hackathon judges can test immediately.',
+    apis: ['Firebase Auth', 'Google Sign-In', 'Anonymous Auth', 'Cloud Firestore'],
+    notes: [
+      'Features the full horizontal Mote SVG primary lockup.',
+      'Communicates offline-first privacy and confirmation guardrails upfront.'
+    ]
+  },
+  {
+    id: 'model_setup',
+    num: '03',
+    title: 'Gemini Nano 4 Setup',
+    route: 'route://model_setup',
+    darkChrome: false,
+    summary: 'Handles all four OnDeviceModelStatus states cleanly: Ready, Downloadable (live byte progress), Downloading, or Unavailable (seamless Cloud Gemini Flash fallback).',
+    apis: ['FirebaseAIOnDevice.checkStatus()', 'download().collect()', 'InferenceMode.PREFER_ON_DEVICE'],
+    notes: [
+      'Try toggling the 3 simulated device states inside the phone screen.',
+      'Unsupported devices never hit a dead end—they automatically route to Cloud Flash.'
+    ]
+  },
+  {
+    id: 'permissions',
+    num: '04',
+    title: 'Permission Wizard',
+    route: 'route://permissions',
+    darkChrome: false,
+    summary: 'Progressive, Play-policy-compliant permission onboarding for Display Over Other Apps, AccessibilityService (with prominent privacy disclosure), and System Settings.',
+    apis: ['SYSTEM_ALERT_WINDOW', 'AccessibilityService', 'WRITE_SETTINGS', 'NotificationManager'],
+    notes: [
+      'Tap each permission switch inside the mockup to simulate granting.',
+      'Users can skip Accessibility and still use native Intents + Focus Mode controls.'
+    ]
+  },
+  {
+    id: 'home',
+    num: '05',
+    title: 'Home Hub',
+    route: 'route://home',
+    darkChrome: false,
+    summary: 'Central command hub showing live Hybrid AI status (Nano 4 Ready vs Cloud Flash), active floating bot switches, an in-app quick prompt bar, and recent execution logs.',
+    apis: ['Firestore SnapshotListener', 'Remote Config', 'Hybrid Router', 'Jetpack Compose'],
+    notes: [
+      'Toggle Airplane Mode in the top bar to watch the live Hybrid status pill adapt.',
+      'Tap any quick prompt chip inside the phone to jump straight into a live Generative UI card.'
+    ]
+  },
+  {
+    id: 'bot_studio',
+    num: '06',
+    title: 'Bot Studio & Editor',
+    route: 'route://bot_editor/{botId}',
+    darkChrome: false,
+    summary: 'Full visual and behavioral customizer for onscreen bots: pick avatar, brand color, size, idle opacity, hybrid routing policy, and per-bot permissions—synced to Cloud Firestore.',
+    apis: ['Compose Canvas', 'Cloud Firestore', 'InferenceMode', 'BotPersona Schema'],
+    notes: [
+      'Customize the bot color, opacity, and routing policy live inside the phone.',
+      'Tap Save Bot to update your active floating bot across the entire prototype.'
+    ]
+  },
+  {
+    id: 'floating_bot',
+    num: '07',
+    title: 'Floating Bot Over App',
+    route: 'service://BotOverlayService',
+    darkChrome: false,
+    summary: 'Hardware-accelerated ComposeView floating bot docked cleanly on the edge of a third-party chat app. Zero idle CPU until tapped; auto-hides on FLAG_SECURE or banking screens.',
+    apis: ['WindowManager', 'TYPE_APPLICATION_OVERLAY', 'FLAG_NOT_FOCUSABLE', 'AccessibilityService'],
+    notes: [
+      'Tap the glowing floating Mote bot orb on the right edge of the chat screen!',
+      'Triggers the transparent foreground scrim handoff so Gemini Nano 4 runs legally in foreground.'
+    ]
+  },
+  {
+    id: 'gen_ui',
+    num: '08',
+    title: 'Generative UI Sheet',
+    route: 'activity://HybridInferenceActivity',
+    darkChrome: false,
+    summary: 'Transparent foreground sheet rendering typed Jetpack Compose primitives from <200-token structured JSON—complete with live Local Nano 4 (emerald) or Cloud Flash (cobalt) provenance badge.',
+    apis: ['generateObject()', 'Structured Output JSON', 'Jetpack Compose', 'Settings.System'],
+    notes: [
+      'Drag the Brightness Slider inside the phone—it actually dims the mockup screen!',
+      'Toggle Airplane Mode at the top to see Local Nano 4 work offline vs Cloud Flash for complex replies.'
+    ]
+  },
+  {
+    id: 'security',
+    num: '09',
+    title: 'Safety & Security Center',
+    route: 'route://security',
+    darkChrome: false,
+    summary: 'Three-tier action safety guardrails: test the Tier-3 Biometric confirmation gate, live Execution HUD with red STOP kill-switch, FLAG_SECURE blocklist, PII redaction, and App Check status.',
+    apis: ['Firebase App Check', 'BiometricPrompt', 'FLAG_SECURE', 'Sealed MoteAction Allowlist'],
+    notes: [
+      'Tap "Test Tier-3 Gate" or "Simulate Live HUD" inside the phone to see the safety UX.',
+      'Sensitive apps (banking, 2FA) are auto-blocked from screen reading by default.'
+    ]
+  },
+  {
+    id: 'bot_gallery',
+    num: '10',
+    title: 'Bot Presets Gallery',
+    route: 'route://bot_gallery',
+    darkChrome: false,
+    summary: 'Curated library of ready-to-spawn onscreen micro-bots (Study Timer, Media DJ, Clipboard Cleaner, Travel Translator) that install into your Firestore bot collection in one tap.',
+    apis: ['Cloud Firestore', 'Firebase Remote Config', 'BotPersona Templates'],
+    notes: [
+      'Tap "+ Install" on any preset bot to add it straight to your Home Hub.',
+      'Each preset declares its exact permission scope and default Hybrid Inference mode.'
+    ]
+  },
+  {
+    id: 'playground',
+    num: '11',
+    title: 'GenUI Prompt Canvas',
+    route: 'route://playground',
+    darkChrome: false,
+    summary: 'Full-screen in-app Generative UI workspace for testing custom natural-language prompts, inspecting the raw <200-token structured JSON output, and comparing Local Nano 4 vs Cloud Flash.',
+    apis: ['generateObject()', 'kotlinx.serialization', 'Firebase AI Logic', 'Compose UI'],
+    notes: [
+      'Toggle "Inspect JSON Schema" to see the exact typed payload returned by Gemini.',
+      'Works completely offline when Airplane Mode is ON.'
+    ]
+  },
+  {
+    id: 'settings',
+    num: '12',
+    title: 'Settings & Hybrid Config',
+    route: 'route://settings',
+    darkChrome: false,
+    summary: 'Complete app settings: Firebase Auth account card, default Hybrid Inference policy, live Remote Config flags, cloud spend-cap monitor, permission shortcuts, and Apache 2.0 info.',
+    apis: ['Firebase Auth', 'Firebase Remote Config', 'App Check', 'DataStore'],
+    notes: [
+      'Accessible anytime from the iPhone-style floating bottom navigation bar.',
+      'Lets judges inspect Remote Config overrides and cloud spend limits live.'
+    ]
+  },
+  {
+    id: 'edge_recovery',
+    num: '13',
+    title: 'Offline & Error Recovery',
+    route: 'route://recovery_states',
+    darkChrome: false,
+    summary: 'Graceful fallback UI for real-world Android edge cases: AICore ErrorCode.BUSY burst quota, FLAG_SECURE protected screens, and offline manual quick controls when Nano is unavailable.',
+    apis: ['ErrorCode.BUSY Backoff', 'FLAG_SECURE Detection', 'AccessibilityManager'],
+    notes: [
+      'Switch between the 3 edge-case scenarios inside the phone to verify zero dead ends.',
+      'Ensures users still get instant manual controls even if both Nano and network are unavailable.'
+    ]
+  }
+];
+
+const state = {
+  currentIndex: 4,
+  viewMode: 'interactive', // 'interactive' | 'gallery'
+  airplaneMode: false,
+  modelStatus: 'AVAILABLE', // 'AVAILABLE' | 'DOWNLOADABLE' | 'UNAVAILABLE'
+  downloadPct: 0,
+  perms: { overlay: true, accessibility: true, settings: false },
+  bots: [
+    { id: 'focus', name: 'Focus', role: 'Settings & Timers', color: '#059669', active: true, mode: 'PREFER_ON_DEVICE', opacity: 90, size: 54 },
+    { id: 'reply', name: 'Reply', role: 'Screen Chat Helper', color: '#1D4ED8', active: true, mode: 'PREFER_ON_DEVICE', opacity: 85, size: 54 },
+    { id: 'saver', name: 'Saver', role: 'Offline Battery', color: '#0B0D1D', active: false, mode: 'ONLY_ON_DEVICE', opacity: 70, size: 48 }
+  ],
+  editingBot: { name: 'Focus', color: '#059669', mode: 'PREFER_ON_DEVICE', opacity: 90, size: 54, screenRead: true, autoTap: false },
+  genUi: {
+    cardType: 'focus', // 'focus' | 'reply'
+    brightness: 82,
+    dnd: true,
+    timerRunning: false,
+    selectedReply: 'Sounds great—see you at 3 PM!'
+  },
+  security: {
+    piiRedaction: true,
+    blockBanking: true,
+    showTier3Modal: false,
+    showHud: false
+  },
+  auditLog: [
+    { time: '03:54', bot: 'Focus', action: 'Focus Mode Card (Brightness + DND)', engine: 'nano' },
+    { time: '03:51', bot: 'Reply', action: 'Drafted 3 replies (PII redacted)', engine: 'flash' }
+  ],
+  playground: { showJson: false, prompt: 'Set up study mode with low brightness and 25m timer' },
+  settings: { defaultMode: 'PREFER_ON_DEVICE', haptic: true, remoteFlagModel: 'gemini-2.5-flash' },
+  edgeCase: 'busy', // 'busy' | 'secure' | 'offline_manual'
+  installedPresets: {},
+  toast: null
+};
+
+let toastTimer = null;
+function showToast(msg) {
+  state.toast = msg;
+  renderToast();
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    state.toast = null;
+    renderToast();
+  }, 2600);
+}
+
+function renderToast() {
+  const slot = document.getElementById('toast-slot');
+  if (!slot) return;
+  if (!state.toast) { slot.innerHTML = ''; return; }
+  slot.innerHTML = `<div class="p-toast"><span>${state.toast}</span><button type="button" data-action="dismiss-toast" style="background:none;border:none;color:#93C5FD;font-weight:700;cursor:pointer;font-size:11px;">OK</button></div>`;
+}
+
+function activeEngineFor(cardType) {
+  if (state.airplaneMode) return 'nano';
+  if (state.modelStatus === 'UNAVAILABLE') return 'flash';
+  return cardType === 'reply' ? 'flash' : 'nano';
+}
+
+function renderStatusIcons(dark) {
+  const col = dark ? '#FFFFFF' : '#0F172A';
+  if (state.airplaneMode) {
+    return `<svg class="ico-svg" style="width:13px;height:13px;color:${col}" viewBox="0 0 24 24"><path d="M17.8 19.2L16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg><span style="color:${col};font-size:11px;">94%</span>`;
+  }
+  return `<span style="color:${col};font-size:11px;">5G</span><span style="color:${col};font-size:11px;">Wi-Fi</span><span style="color:${col};font-size:11px;">94%</span>`;
+}
+
+function renderScreenHtml(screenId) {
+  const activeBot = state.bots.find(b => b.active) || state.bots[0];
+  if (screenId === 'splash') {
+    return `
+      <div style="height:100%;background:#0B0D1D;color:#FFFFFF;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:72px 24px 36px;text-align:center;">
+        <div></div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:18px;">
+          <div style="width:92px;height:92px;border-radius:26px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);display:flex;align-items:center;justify-content:center;">
+            <svg width="58" height="58" style="color:#FFFFFF"><use href="#mote-icon-svg"/></svg>
+          </div>
+          <svg width="108" height="32" style="color:#FFFFFF"><use href="#mote-wordmark-svg"/></svg>
+          <div style="font-size:12px;color:#94A3B8;max-width:220px;line-height:1.5;">Hybrid-AI onscreen bots &amp; native Generative UI</div>
+        </div>
+        <div style="width:100%;display:flex;flex-direction:column;gap:10px;align-items:center;">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#34D399;background:rgba(5,150,105,0.16);padding:5px 12px;border-radius:999px;">
+            ● App Check OK · Gemini Nano 4 warmUp()
+          </div>
+          <button type="button" data-goto="1" class="p-btn-primary" style="background:#FFFFFF;color:#0B0D1D;">Enter Onboarding →</button>
+        </div>
+      </div>
+    `;
+  }
+
+  if (screenId === 'auth') {
+    return `
+      <div class="p-pad" style="height:100%;display:flex;flex-direction:column;justify-content:space-between;">
+        <div style="padding-top:16px;">
+          <svg width="128" height="40" style="color:#0B0D1D"><use href="#mote-primary-svg"/></svg>
+          <h2 style="font-family:'Space Grotesk',sans-serif;font-size:22px;line-height:1.18;margin:16px 0 8px;">Control your phone with private onscreen bots.</h2>
+          <p style="font-size:13px;color:#475569;margin:0;line-height:1.5;">Fast offline controls on Gemini Nano 4, with automatic Cloud Gemini Flash fallback.</p>
+        </div>
+        <div class="ios-group" style="margin:14px 0;">
+          <div class="ios-row" style="justify-content:flex-start;">
+            <div style="width:32px;height:32px;border-radius:10px;background:#ECFDF5;color:#059669;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+              <svg class="ico-svg" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            </div>
+            <div><strong style="font-size:12.5px;display:block;">Offline-first Hybrid AI</strong><span style="font-size:11.5px;color:#475569;">Runs locally via AICore with $0 inference cost.</span></div>
+          </div>
+          <div class="ios-row" style="justify-content:flex-start;">
+            <div style="width:32px;height:32px;border-radius:10px;background:#EFF6FF;color:#1D4ED8;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+              <svg class="ico-svg" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+            </div>
+            <div><strong style="font-size:12.5px;display:block;">Instant Generative UI</strong><span style="font-size:11.5px;color:#475569;">Spawns native Compose sliders &amp; chips on demand.</span></div>
+          </div>
+          <div class="ios-row" style="justify-content:flex-start;">
+            <div style="width:32px;height:32px;border-radius:10px;background:#F1F5F9;color:#0B0D1D;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+              <svg class="ico-svg" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/></svg>
+            </div>
+            <div><strong style="font-size:12.5px;display:block;">Strict Privacy Guardrails</strong><span style="font-size:11.5px;color:#475569;">Skips banking apps &amp; confirms sensitive taps.</span></div>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <button type="button" data-goto="2" data-toast="Signed in with Google · Firestore sync ready" class="p-btn-primary">Continue with Google</button>
+          <button type="button" data-goto="2" data-toast="Guest session active (Anonymous Auth)" class="p-btn-ghost">Continue as Guest (Demo Mode)</button>
+        </div>
+      </div>
+    `;
+  }
+
+  if (screenId === 'model_setup') {
+    const isAvail = state.modelStatus === 'AVAILABLE';
+    const isDl = state.modelStatus === 'DOWNLOADABLE';
+    const isUnavail = state.modelStatus === 'UNAVAILABLE';
+    return `
+      <div class="p-pad" style="height:100%;display:flex;flex-direction:column;justify-content:space-between;">
+        <div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#475569;margin-bottom:6px;">STEP 1 OF 2 · HYBRID ENGINE</div>
+          <h2 style="font-family:'Space Grotesk',sans-serif;font-size:21px;margin:0 0 8px;">On-Device Gemini Nano 4</h2>
+          <p style="font-size:12.5px;color:#475569;margin:0 0 14px;line-height:1.5;">Mote checks Android AICore so local intents work offline and privately.</p>
+
+          <div style="display:flex;gap:6px;margin-bottom:14px;">
+            <button type="button" data-model-status="AVAILABLE" style="flex:1;padding:6px 4px;border-radius:8px;border:1px solid ${isAvail?'#059669':'#CBD5E1'};background:${isAvail?'#ECFDF5':'#FFF'};color:${isAvail?'#065F46':'#475569'};font-size:11px;font-weight:700;cursor:pointer;">Ready</button>
+            <button type="button" data-model-status="DOWNLOADABLE" style="flex:1;padding:6px 4px;border-radius:8px;border:1px solid ${isDl?'#1D4ED8':'#CBD5E1'};background:${isDl?'#EFF6FF':'#FFF'};color:${isDl?'#1E3A8A':'#475569'};font-size:11px;font-weight:700;cursor:pointer;">Download</button>
+            <button type="button" data-model-status="UNAVAILABLE" style="flex:1;padding:6px 4px;border-radius:8px;border:1px solid ${isUnavail?'#0B0D1D':'#CBD5E1'};background:${isUnavail?'#F1F5F9':'#FFF'};color:${isUnavail?'#0B0D1D':'#475569'};font-size:11px;font-weight:700;cursor:pointer;">Fallback</button>
+          </div>
+
+          ${isAvail ? `
+            <div class="p-card" style="background:#ECFDF5;border-color:#A7F3D0;">
+              <div class="p-badge-nano"><span class="dot-pulse"></span> OnDeviceModelStatus.AVAILABLE</div>
+              <div style="font-size:14px;font-weight:700;color:#065F46;margin-top:10px;">Gemini Nano 4 is warmed up</div>
+              <p style="font-size:12px;color:#065F46;margin:6px 0 0;line-height:1.45;">Offline Generative UI &amp; local intent routing are ready. Cloud Gemini Flash stands by for complex workflows.</p>
+            </div>
+          ` : isDl ? `
+            <div class="p-card" style="background:#EFF6FF;border-color:#BFDBFE;">
+              <div class="p-badge-flash">OnDeviceModelStatus.DOWNLOADABLE</div>
+              <div style="font-size:14px;font-weight:700;color:#1E3A8A;margin-top:10px;">Download Gemini Nano via AICore</div>
+              <div style="height:8px;background:#DBEAFE;border-radius:999px;margin:12px 0 6px;overflow:hidden;">
+                <div style="height:100%;width:${state.downloadPct}%;background:#1D4ED8;transition:width 0.2s;"></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:11px;color:#1E3A8A;">
+                <span>${state.downloadPct}%</span>
+                <span>Wi-Fi recommended</span>
+              </div>
+              <button type="button" data-action="sim-download" class="p-btn-primary" style="margin-top:12px;padding:9px;font-size:12px;background:#1D4ED8;">Simulate AICore Download</button>
+            </div>
+          ` : `
+            <div class="p-card" style="background:#F8FAFC;border-color:#CBD5E1;">
+              <div class="p-badge-flash">OnDeviceModelStatus.UNAVAILABLE</div>
+              <div style="font-size:14px;font-weight:700;color:#0F172A;margin-top:10px;">Automatic Cloud Flash Mode</div>
+              <p style="font-size:12px;color:#475569;margin:6px 0 0;line-height:1.45;">This device does not support AICore yet. Firebase AI Logic automatically routes requests to Cloud Gemini Flash with App Check.</p>
+            </div>
+          `}
+        </div>
+
+        <button type="button" data-goto="3" class="p-btn-primary">Continue to Permissions →</button>
+      </div>
+    `;
+  }
+
+  if (screenId === 'permissions') {
+    return `
+      <div class="p-pad" style="height:100%;display:flex;flex-direction:column;justify-content:space-between;">
+        <div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#475569;margin-bottom:6px;">STEP 2 OF 2 · TRANSPARENT ACCESS</div>
+          <h2 style="font-family:'Space Grotesk',sans-serif;font-size:21px;margin:0 0 8px;">Grant Only What You Need</h2>
+          <p style="font-size:12px;color:#475569;margin:0 0 14px;">Every permission can be paused per bot at any time.</p>
+
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <div class="p-card" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+              <div>
+                <strong style="font-size:12.5px;display:block;">Display Over Other Apps</strong>
+                <span style="font-size:11px;color:#475569;">Required for floating Mote bots</span>
+              </div>
+              <button type="button" data-perm="overlay" class="sw ${state.perms.overlay ? 'on' : ''}" aria-label="Toggle overlay permission"></button>
+            </div>
+
+            <div class="p-card" style="display:flex;flex-direction:column;gap:8px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                <div>
+                  <strong style="font-size:12.5px;display:block;">Accessibility Service</strong>
+                  <span style="font-size:11px;color:#475569;">On-demand screen read &amp; safe taps</span>
+                </div>
+                <button type="button" data-perm="accessibility" class="sw ${state.perms.accessibility ? 'on' : ''}" aria-label="Toggle accessibility permission"></button>
+              </div>
+              <div style="font-size:11px;color:#065F46;background:#ECFDF5;padding:7px 9px;border-radius:8px;line-height:1.4;">
+                <strong>Privacy Disclosure:</strong> Reads screen text only when you tap a bot. Skips passwords, FLAG_SECURE, and banking apps.
+              </div>
+            </div>
+
+            <div class="p-card" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+              <div>
+                <strong style="font-size:12.5px;display:block;">System Controls (DND &amp; Brightness)</strong>
+                <span style="font-size:11px;color:#475569;">Unlocks offline Focus Mode sliders</span>
+              </div>
+              <button type="button" data-perm="settings" class="sw ${state.perms.settings ? 'on' : ''}" aria-label="Toggle system settings permission"></button>
+            </div>
+          </div>
+        </div>
+
+        <button type="button" data-goto="4" data-toast="Focus bot spawned on screen edge!" class="p-btn-primary">Spawn My First Bot →</button>
+      </div>
+    `;
+  }
+
+  if (screenId === 'home') {
+    const isLocal = state.airplaneMode || state.modelStatus === 'AVAILABLE';
+    return `
+      <div class="ios-screen-bg">
+        <div class="ios-top-nav">
+          <div class="ios-nav-title">
+            <svg width="22" height="22" style="color:#0B0D1D"><use href="#mote-icon-svg"/></svg>
+            <span>Mote</span>
+          </div>
+          <span class="${isLocal ? 'p-badge-nano' : 'p-badge-flash'}">
+            <span class="dot-pulse"></span> ${isLocal ? (state.airplaneMode ? 'Nano 4 Offline' : 'Nano 4 Ready') : 'Cloud Flash'}
+          </span>
+        </div>
+
+        <div class="p-pad" style="display:flex;flex-direction:column;gap:14px;">
+          <div class="p-card" style="background:#0B0D1D;color:#FFFFFF;border-color:#0B0D1D;">
+            <div style="font-size:11px;font-weight:600;letter-spacing:0.03em;text-transform:uppercase;color:#94A3B8;margin-bottom:9px;">Quick Generative UI</div>
+            <div style="display:flex;gap:7px;flex-wrap:wrap;">
+              <button type="button" data-open-genui="focus" style="display:inline-flex;align-items:center;gap:5px;padding:7px 12px;border-radius:999px;border:none;background:#059669;color:#FFF;font-size:11.5px;font-weight:600;cursor:pointer;">
+                <svg class="ico-svg" style="width:13px;height:13px;" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                <span>Focus Mode</span>
+              </button>
+              <button type="button" data-open-genui="reply" style="display:inline-flex;align-items:center;gap:5px;padding:7px 12px;border-radius:999px;border:none;background:#1D4ED8;color:#FFF;font-size:11.5px;font-weight:600;cursor:pointer;">
+                <svg class="ico-svg" style="width:13px;height:13px;" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <span>Smart Reply</span>
+              </button>
+              <button type="button" data-goto="6" style="padding:7px 12px;border-radius:999px;border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.06);color:#FFF;font-size:11.5px;font-weight:600;cursor:pointer;">View Floating Bot</button>
+            </div>
+          </div>
+
+          <div>
+            <div class="ios-section-label">
+              <span>Active Onscreen Bots</span>
+              <button type="button" data-goto="5" style="background:none;border:none;color:#1D4ED8;font-size:11.5px;font-weight:600;text-transform:none;letter-spacing:0;cursor:pointer;">Customize</button>
+            </div>
+            <div class="ios-group">
+              ${state.bots.map(b => `
+                <div class="ios-row">
+                  <div style="display:flex;align-items:center;gap:10px;">
+                    <div style="width:34px;height:34px;border-radius:11px;background:${b.color};color:#FFF;display:flex;align-items:center;justify-content:center;">
+                      <svg width="18" height="18" style="color:#FFF"><use href="#mote-icon-svg"/></svg>
+                    </div>
+                    <div>
+                      <strong style="font-size:13px;display:block;color:#0F172A;">${b.name}</strong>
+                      <span style="font-size:11px;color:#64748B;">${b.role}</span>
+                    </div>
+                  </div>
+                  <button type="button" data-toggle-bot="${b.id}" class="sw ${b.active ? 'on' : ''}" aria-label="Toggle ${b.name} bot"></button>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="p-card" style="padding:12px 14px;">
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:#065F46;">84%</div>
+              <div style="font-size:11px;color:#64748B;margin-top:2px;">Local Nano 4 runs</div>
+            </div>
+            <div class="p-card" style="padding:12px 14px;">
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:#1E3A8A;">380 ms</div>
+              <div style="font-size:11px;color:#64748B;margin-top:2px;">Avg local GenUI</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (screenId === 'bot_studio') {
+    const eb = state.editingBot;
+    const colors = ['#0B0D1D', '#059669', '#1D4ED8', '#D97706', '#7C3AED'];
+    return `
+      <div class="ios-screen-bg">
+        <div class="ios-top-nav">
+          <span class="ios-nav-title">Bot Studio</span>
+          <button type="button" data-goto="9" class="ios-action-pill" style="color:#1D4ED8;">Presets</button>
+        </div>
+        <div class="p-pad" style="display:flex;flex-direction:column;gap:12px;">
+
+        <div class="p-card" style="display:flex;align-items:center;justify-content:space-between;background:#F8FAFC;">
+          <div>
+            <div style="font-size:11px;color:#475569;">Live Edge Preview</div>
+            <strong style="font-size:14px;">${eb.name} Bot</strong>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#475569;margin-top:2px;">${eb.mode}</div>
+          </div>
+          <div id="bot-preview-orb" style="width:${eb.size}px;height:${eb.size}px;border-radius:50%;background:${eb.color};opacity:${eb.opacity / 100};display:flex;align-items:center;justify-content:center;color:#FFF;box-shadow:0 8px 18px rgba(11,13,29,0.22);transition:background-color 0.24s ease, opacity 0.1s linear, transform 0.24s cubic-bezier(0.34,1.38,0.45,1);">
+            <svg width="${Math.round(eb.size * 0.52)}" height="${Math.round(eb.size * 0.52)}" style="color:#FFF"><use href="#mote-icon-svg"/></svg>
+          </div>
+        </div>
+
+        <div>
+          <div style="font-size:11.5px;font-weight:600;margin-bottom:6px;">Bot Color</div>
+          <div style="display:flex;gap:10px;">
+            ${colors.map(c => `
+              <button type="button" data-bot-color="${c}" aria-label="Color ${c}" style="width:30px;height:30px;border-radius:50%;background:${c};border:${eb.color===c ? '3px solid #93C5FD' : '2px solid #FFF'};box-shadow:0 0 0 1px #CBD5E1;cursor:pointer;"></button>
+            `).join('')}
+          </div>
+        </div>
+
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:11.5px;font-weight:600;margin-bottom:4px;">
+            <span>Idle Docked Opacity</span><span id="lbl-opacity">${eb.opacity}%</span>
+          </div>
+          <input id="inp-opacity" type="range" min="35" max="100" value="${eb.opacity}" style="width:100%;accent-color:#0B0D1D;">
+        </div>
+
+        <div>
+          <div style="font-size:11.5px;font-weight:600;margin-bottom:6px;">Hybrid Inference Mode</div>
+          <div style="display:flex;flex-direction:column;gap:5px;">
+            ${['PREFER_ON_DEVICE', 'ONLY_ON_DEVICE', 'PREFER_IN_CLOUD'].map(m => `
+              <button type="button" data-bot-mode="${m}" style="text-align:left;padding:8px 10px;border-radius:10px;border:1px solid ${eb.mode===m?'#0B0D1D':'#E2E8F0'};background:${eb.mode===m?'#0B0D1D':'#FFF'};color:${eb.mode===m?'#FFF':'#334155'};font-family:'JetBrains Mono',monospace;font-size:11px;cursor:pointer;">
+                ${m}
+              </button>
+            `).join('')}
+          </div>
+        </div>
+
+        <button type="button" data-action="save-bot" class="p-btn-primary">Save &amp; Sync Bot to Screen</button>
+        </div>
+      </div>
+    `;
+  }
+
+  if (screenId === 'floating_bot') {
+    return `
+      <div style="height:100%;background:#EEF2F6;position:relative;display:flex;flex-direction:column;">
+        <!-- Simulated Third-Party Messaging App -->
+        <div style="background:#FFFFFF;padding:12px 16px;border-bottom:1px solid #E2E8F0;display:flex;align-items:center;justify-content:space-between;">
+          <div>
+            <strong style="font-size:14px;display:block;">Team Hackathon Chat</strong>
+            <span style="font-size:11px;color:#059669;">3 members online · Third-party app</span>
+          </div>
+          <span style="font-size:11px;color:#64748B;">14:22</span>
+        </div>
+
+        <div style="padding:14px;display:flex;flex-direction:column;gap:10px;flex:1;">
+          <div style="background:#FFFFFF;padding:10px 12px;border-radius:14px 14px 14px 4px;max-width:82%;font-size:12.5px;line-height:1.45;color:#1E293B;box-shadow:0 1px 2px rgba(0,0,0,0.05);">
+            Hey! Can you dim your screen for the demo recording, turn on Do Not Disturb, and set a 25-min timer?
+          </div>
+          <div style="background:#FFFFFF;padding:10px 12px;border-radius:14px 14px 14px 4px;max-width:82%;font-size:12.5px;line-height:1.45;color:#1E293B;box-shadow:0 1px 2px rgba(0,0,0,0.05);">
+            Also let me know if we are still meeting at 3 PM to submit on Devpost!
+          </div>
+          <div style="margin-top:auto;background:#FFFFFF;border:1px solid #CBD5E1;border-radius:999px;padding:9px 14px;font-size:12px;color:#94A3B8;">
+            Message Team Hackathon Chat...
+          </div>
+        </div>
+
+        <!-- Hint banner -->
+        <div style="position:absolute;right:74px;top:248px;background:#0B0D1D;color:#FFF;padding:6px 10px;border-radius:10px;font-size:11px;font-weight:600;box-shadow:0 6px 14px rgba(0,0,0,0.2);">
+          Tap floating bot →
+        </div>
+
+        <!-- Live Floating Mote Bot Orb -->
+        <button type="button" data-goto="7" class="floating-bot-orb" style="background:${activeBot.color};opacity:${activeBot.opacity/100};" aria-label="Tap floating Mote bot">
+          <svg width="28" height="28" style="color:#FFFFFF"><use href="#mote-icon-svg"/></svg>
+        </button>
+      </div>
+    `;
+  }
+
+  if (screenId === 'gen_ui') {
+    const eng = activeEngineFor(state.genUi.cardType);
+    const isNano = eng === 'nano';
+    return `
+      <div style="height:100%;background:rgba(11,13,29,0.52);display:flex;flex-direction:column;justify-content:flex-end;position:relative;">
+        <div style="position:absolute;top:14px;left:16px;right:16px;background:rgba(255,255,255,0.9);padding:8px 12px;border-radius:12px;font-size:11px;color:#334155;">
+          <strong>Transparent Foreground Scrim:</strong> Enables local Gemini Nano 4 over any app.
+        </div>
+
+        <!-- Bottom Generative UI Card Sheet -->
+        <div style="background:#FFFFFF;border-radius:26px 26px 0 0;padding:16px 18px 20px;display:flex;flex-direction:column;gap:12px;box-shadow:0 -12px 32px rgba(11,13,29,0.28);">
+          <div style="width:36px;height:4px;border-radius:999px;background:#CBD5E1;margin:0 auto;"></div>
+
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <div style="width:28px;height:28px;border-radius:9px;background:${activeBot.color};display:flex;align-items:center;justify-content:center;color:#FFF;">
+                <svg width="16" height="16" style="color:#FFF"><use href="#mote-icon-svg"/></svg>
+              </div>
+              <strong style="font-family:'Space Grotesk',sans-serif;font-size:15px;">${state.genUi.cardType === 'focus' ? 'Focus Mode' : 'Smart Reply'}</strong>
+            </div>
+            <span class="${isNano ? 'p-badge-nano' : 'p-badge-flash'}">
+              <span class="dot-pulse"></span> ${isNano ? 'Local Nano 4 · 360ms' : 'Cloud Flash · 740ms'}
+            </span>
+          </div>
+
+          <div style="display:flex;gap:6px;">
+            <button type="button" data-genui-tab="focus" style="flex:1;padding:6px;border-radius:8px;border:1px solid ${state.genUi.cardType==='focus'?'#059669':'#E2E8F0'};background:${state.genUi.cardType==='focus'?'#ECFDF5':'#FFF'};color:#0F172A;font-size:11.5px;font-weight:600;cursor:pointer;">Focus Controls</button>
+            <button type="button" data-genui-tab="reply" style="flex:1;padding:6px;border-radius:8px;border:1px solid ${state.genUi.cardType==='reply'?'#1D4ED8':'#E2E8F0'};background:${state.genUi.cardType==='reply'?'#EFF6FF':'#FFF'};color:#0F172A;font-size:11.5px;font-weight:600;cursor:pointer;">Quick Replies</button>
+          </div>
+
+          ${state.genUi.cardType === 'focus' ? `
+            <div class="p-card" style="display:flex;flex-direction:column;gap:12px;">
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600;margin-bottom:4px;">
+                  <span>Screen Brightness</span><span id="lbl-brightness">${state.genUi.brightness}%</span>
+                </div>
+                <input id="inp-brightness" type="range" min="20" max="100" value="${state.genUi.brightness}" style="width:100%;accent-color:#1D4ED8;">
+              </div>
+
+              <div style="display:flex;align-items:center;justify-content:space-between;">
+                <div>
+                  <strong style="font-size:12.5px;display:block;">Do Not Disturb</strong>
+                  <span style="font-size:11px;color:#475569;">Silence notifications</span>
+                </div>
+                <button type="button" data-action="toggle-dnd" class="sw ${state.genUi.dnd ? 'on' : ''}" aria-label="Toggle Do Not Disturb"></button>
+              </div>
+
+              <div style="display:flex;align-items:center;justify-content:space-between;">
+                <span style="font-size:12px;font-weight:600;">Focus Timer</span>
+                <button type="button" data-action="toggle-timer" style="padding:6px 12px;border-radius:999px;border:none;background:${state.genUi.timerRunning ? '#059669' : '#E2E8F0'};color:${state.genUi.timerRunning ? '#FFF' : '#0F172A'};font-size:11.5px;font-weight:600;cursor:pointer;">
+                  ${state.genUi.timerRunning ? '24:59 Running' : 'Start 25m Timer'}
+                </button>
+              </div>
+            </div>
+            <button type="button" data-action="apply-focus" class="p-btn-primary">Apply All Locally</button>
+          ` : `
+            <div class="p-card" style="display:flex;flex-direction:column;gap:8px;">
+              <div style="font-size:11px;color:#475569;">Tap a generated draft (PII redacted locally):</div>
+              ${['Sounds great—see you at 3 PM!', 'On it! Dimming screen & setting timer now.', 'Can we push to 3:15 PM?'].map(r => `
+                <button type="button" data-pick-reply="${r}" style="text-align:left;padding:9px 11px;border-radius:10px;border:1px solid ${state.genUi.selectedReply===r?'#1D4ED8':'#CBD5E1'};background:${state.genUi.selectedReply===r?'#EFF6FF':'#FFF'};color:#0F172A;font-size:12px;cursor:pointer;">
+                  ${r}
+                </button>
+              `).join('')}
+            </div>
+            <button type="button" data-goto="8" data-toast="Tier-3 confirmation required before sending" class="p-btn-primary" style="background:#1D4ED8;">Review &amp; Confirm Send →</button>
+          `}
+        </div>
+      </div>
+    `;
+  }
+
+  if (screenId === 'security') {
+    return `
+      <div class="p-pad" style="display:flex;flex-direction:column;gap:12px;position:relative;min-height:100%;">
+        ${state.security.showHud ? `
+          <div style="background:#0B0D1D;color:#FFF;padding:9px 12px;border-radius:14px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <span style="font-size:11.5px;font-weight:600;">● Step 2/3: Pasting draft...</span>
+            <button type="button" data-action="stop-hud" style="padding:4px 10px;border-radius:999px;border:none;background:#DC2626;color:#FFF;font-size:11px;font-weight:700;cursor:pointer;">STOP</button>
+          </div>
+        ` : ''}
+
+        <div class="ios-top-nav" style="margin:-14px -18px 2px;">
+          <span class="ios-nav-title">Security</span>
+          <span class="p-badge-nano">App Check OK</span>
+        </div>
+
+        <div style="display:flex;gap:6px;">
+          <button type="button" data-action="toggle-tier3" class="p-btn-ghost" style="font-size:11.5px;padding:8px;">Test Tier-3 Gate</button>
+          <button type="button" data-action="start-hud" class="p-btn-ghost" style="font-size:11.5px;padding:8px;">Test Stop HUD</button>
+        </div>
+
+        ${state.security.showTier3Modal ? `
+          <div class="p-card" style="background:#FEF2F2;border-color:#FCA5A5;">
+            <strong style="font-size:12.5px;color:#991B1B;display:block;">Tier-3 Action Confirmation</strong>
+            <p style="font-size:11.5px;color:#7F1D1D;margin:4px 0 10px;line-height:1.4;">Allow Reply bot to tap <strong>Send</strong> in Team Hackathon Chat?</p>
+            <div style="display:flex;gap:6px;">
+              <button type="button" data-action="confirm-tier3" style="flex:1;padding:8px;border-radius:10px;border:none;background:#DC2626;color:#FFF;font-size:11.5px;font-weight:700;cursor:pointer;">Biometric Confirm</button>
+              <button type="button" data-action="toggle-tier3" style="padding:8px 12px;border-radius:10px;border:1px solid #FCA5A5;background:#FFF;color:#991B1B;font-size:11.5px;font-weight:600;cursor:pointer;">Cancel</button>
+            </div>
+          </div>
+        ` : ''}
+
+        <div class="p-card" style="display:flex;flex-direction:column;gap:10px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div>
+              <strong style="font-size:12px;display:block;">Local PII Redaction</strong>
+              <span style="font-size:11px;color:#475569;">Mask OTPs, cards, emails on-device</span>
+            </div>
+            <button type="button" data-sec="piiRedaction" class="sw ${state.security.piiRedaction ? 'on' : ''}" aria-label="Toggle PII redaction"></button>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div>
+              <strong style="font-size:12px;display:block;">Block Banking &amp; FLAG_SECURE</strong>
+              <span style="font-size:11px;color:#475569;">Auto-hide bots on protected screens</span>
+            </div>
+            <button type="button" data-sec="blockBanking" class="sw ${state.security.blockBanking ? 'on' : ''}" aria-label="Toggle banking blocklist"></button>
+          </div>
+        </div>
+
+        <div>
+          <strong style="font-size:12px;display:block;margin-bottom:6px;">Action Audit Log</strong>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            ${state.auditLog.slice(0, 3).map(a => `
+              <div class="p-card" style="padding:8px 10px;display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                <div>
+                  <div style="font-size:11.5px;font-weight:600;">${a.bot} · ${a.action}</div>
+                  <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#64748B;">${a.time}</div>
+                </div>
+                <span class="${a.engine === 'nano' ? 'p-badge-nano' : 'p-badge-flash'}" style="font-size:9.5px;">${a.engine === 'nano' ? 'Nano 4' : 'Flash'}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (screenId === 'bot_gallery') {
+    const presets = [
+      { id: 'study', name: 'Study Timer', desc: 'Pomodoro + DND + Dim', color: '#059669', mode: 'ONLY_ON_DEVICE' },
+      { id: 'media', name: 'Media DJ', desc: 'Volume, EQ & quick skip', color: '#1D4ED8', mode: 'PREFER_ON_DEVICE' },
+      { id: 'clip', name: 'Clip Cleaner', desc: 'Strip tracking URLs & PII', color: '#0B0D1D', mode: 'ONLY_ON_DEVICE' },
+      { id: 'trans', name: 'Live Translate', desc: 'On-screen text overlay', color: '#7C3AED', mode: 'PREFER_IN_CLOUD' }
+    ];
+    return `
+      <div class="p-pad" style="display:flex;flex-direction:column;gap:12px;">
+        <div class="ios-top-nav" style="margin:-14px -18px 2px;">
+          <button type="button" data-goto="5" class="ios-back-btn"><svg class="ico-svg" style="width:13px;height:13px;" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg><span>Studio</span></button>
+          <span class="ios-nav-title">Presets</span>
+          <span style="width:52px;"></span>
+        </div>
+        <p style="font-size:12px;color:#475569;margin:0;">One-tap onscreen bots synced via Firestore.</p>
+        <div style="display:flex;flex-direction:column;gap:9px;">
+          ${presets.map(p => {
+            const added = !!state.installedPresets[p.id];
+            return `
+              <div class="p-card" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 12px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <div style="width:36px;height:36px;border-radius:12px;background:${p.color};display:flex;align-items:center;justify-content:center;color:#FFF;">
+                    <svg width="20" height="20" style="color:#FFF"><use href="#mote-icon-svg"/></svg>
+                  </div>
+                  <div>
+                    <strong style="font-size:12.5px;display:block;">${p.name}</strong>
+                    <span style="font-size:11px;color:#475569;display:block;">${p.desc}</span>
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#64748B;">${p.mode}</span>
+                  </div>
+                </div>
+                <button type="button" data-install-preset="${p.id}" data-preset-name="${p.name}" data-preset-color="${p.color}" style="padding:6px 11px;border-radius:999px;border:none;background:${added ? '#ECFDF5' : '#0B0D1D'};color:${added ? '#065F46' : '#FFF'};font-size:11px;font-weight:700;cursor:pointer;">
+                  ${added ? 'Added' : '+ Install'}
+                </button>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  if (screenId === 'playground') {
+    const isNano = state.airplaneMode || state.modelStatus === 'AVAILABLE';
+    return `
+      <div class="p-pad" style="display:flex;flex-direction:column;gap:12px;">
+        <div class="ios-top-nav" style="margin:-14px -18px 2px;">
+          <span class="ios-nav-title">GenUI Canvas</span>
+          <span class="${isNano ? 'p-badge-nano' : 'p-badge-flash'}">${isNano ? 'Local Nano 4' : 'Cloud Flash'}</span>
+        </div>
+
+        <div class="p-card" style="background:#F8FAFC;">
+          <div style="font-size:11px;color:#475569;margin-bottom:4px;">Active Prompt</div>
+          <div style="font-size:12.5px;font-weight:600;color:#0F172A;">"${state.playground.prompt}"</div>
+        </div>
+
+        <div style="display:flex;gap:6px;">
+          <button type="button" data-action="toggle-json" class="p-btn-ghost" style="padding:8px;font-size:11.5px;">${state.playground.showJson ? 'Show Native Compose Card' : 'Inspect Typed JSON Schema'}</button>
+        </div>
+
+        ${state.playground.showJson ? `
+          <pre style="margin:0;padding:12px;border-radius:14px;background:#0B0D1D;color:#E2E8F0;font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:1.5;overflow-x:auto;">{
+  "title": "Study Mode",
+  "engine": "${isNano ? 'on_device' : 'cloud_flash'}",
+  "tokens": 134,
+  "widgets": [
+    {"type":"slider","id":"brightness","val":30},
+    {"type":"toggle","id":"dnd","on":true},
+    {"type":"chip","id":"timer_25m"}
+  ]
+}</pre>
+        ` : `
+          <div class="p-card" style="border-color:#059669;background:#FFFFFF;display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <strong style="font-size:13.5px;">Study Mode</strong>
+              <span class="p-badge-nano">134 tok · 340ms</span>
+            </div>
+            <div style="font-size:12px;color:#334155;">Brightness: <strong>30%</strong> · DND: <strong>ON</strong> · Timer: <strong>25m</strong></div>
+            <button type="button" data-goto="7" class="p-btn-primary" style="padding:9px;font-size:12px;">Open Live Interactive Card →</button>
+          </div>
+        `}
+      </div>
+    `;
+  }
+
+  if (screenId === 'settings') {
+    return `
+      <div class="p-pad" style="display:flex;flex-direction:column;gap:12px;">
+        <div class="ios-top-nav" style="margin:-14px -18px 2px;">
+          <span class="ios-nav-title">Settings</span>
+          <span class="ios-action-pill" style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#475569;cursor:default;">v1.0</span>
+        </div>
+
+        <div class="p-card" style="display:flex;align-items:center;gap:10px;">
+          <svg width="38" height="38"><use href="#mote-app-icon-svg"/></svg>
+          <div>
+            <strong style="font-size:13px;display:block;">Mote Account</strong>
+            <span style="font-size:11px;color:#475569;">Synced via Firebase Auth &amp; Firestore</span>
+          </div>
+        </div>
+
+        <div class="p-card" style="display:flex;flex-direction:column;gap:9px;">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#1E3A8A;font-weight:600;">FIREBASE REMOTE CONFIG</div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;">
+            <span style="color:#475569;">Cloud fallback model</span>
+            <strong style="font-family:'JetBrains Mono',monospace;font-size:11px;">${state.settings.remoteFlagModel}</strong>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;">
+            <span style="color:#475569;">Local token ceiling</span>
+            <strong style="font-family:'JetBrains Mono',monospace;font-size:11px;">4,000 tok</strong>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;">
+            <span style="color:#475569;">Monthly cloud cap</span>
+            <strong style="color:#065F46;">$0.00 / $5.00</strong>
+          </div>
+        </div>
+
+        <div class="p-card" style="display:flex;align-items:center;justify-content:space-between;">
+          <div>
+            <strong style="font-size:12px;display:block;">Haptic Bot Feedback</strong>
+            <span style="font-size:11px;color:#475569;">Subtle tick on dock &amp; confirm</span>
+          </div>
+          <button type="button" data-action="toggle-haptic" class="sw ${state.settings.haptic ? 'on' : ''}" aria-label="Toggle haptics"></button>
+        </div>
+
+        <button type="button" data-goto="12" class="p-btn-ghost" style="font-size:12px;padding:10px;">View Offline &amp; Error Recovery →</button>
+      </div>
+    `;
+  }
+
+  if (screenId === 'edge_recovery') {
+    const ec = state.edgeCase;
+    return `
+      <div class="p-pad" style="display:flex;flex-direction:column;gap:12px;">
+        <div class="ios-top-nav" style="margin:-14px -18px 2px;">
+          <button type="button" data-goto="11" class="ios-back-btn"><svg class="ico-svg" style="width:13px;height:13px;" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg><span>Settings</span></button>
+          <span class="ios-nav-title">Recovery</span>
+          <span style="width:58px;"></span>
+        </div>
+        <div style="display:flex;gap:5px;">
+          <button type="button" data-edge="busy" style="flex:1;padding:6px 4px;border-radius:8px;border:1px solid ${ec==='busy'?'#D97706':'#CBD5E1'};background:${ec==='busy'?'#FFFBEB':'#FFF'};font-size:10.5px;font-weight:700;cursor:pointer;">AICore Busy</button>
+          <button type="button" data-edge="secure" style="flex:1;padding:6px 4px;border-radius:8px;border:1px solid ${ec==='secure'?'#DC2626':'#CBD5E1'};background:${ec==='secure'?'#FEF2F2':'#FFF'};font-size:10.5px;font-weight:700;cursor:pointer;">FLAG_SECURE</button>
+          <button type="button" data-edge="offline_manual" style="flex:1;padding:6px 4px;border-radius:8px;border:1px solid ${ec==='offline_manual'?'#0B0D1D':'#CBD5E1'};background:${ec==='offline_manual'?'#F1F5F9':'#FFF'};font-size:10.5px;font-weight:700;cursor:pointer;">Offline Fallback</button>
+        </div>
+
+        ${ec === 'busy' ? `
+          <div class="p-card" style="background:#FFFBEB;border-color:#FCD34D;">
+            <strong style="font-size:13px;color:#92400E;display:block;">ErrorCode.BUSY · AICore Quota</strong>
+            <p style="font-size:12px;color:#92400E;margin:6px 0 10px;line-height:1.45;">On-device inference quota hit. Mote applies exponential backoff and routes seamlessly to Cloud Gemini Flash.</p>
+            <span class="p-badge-flash">Auto-switched → Cloud Flash</span>
+          </div>
+        ` : ec === 'secure' ? `
+          <div class="p-card" style="background:#FEF2F2;border-color:#FCA5A5;">
+            <strong style="font-size:13px;color:#991B1B;display:block;">Protected App Detected</strong>
+            <p style="font-size:12px;color:#7F1D1D;margin:6px 0 0;line-height:1.45;">Banking or <code>FLAG_SECURE</code> screen active. Floating bots auto-hid and screen reading is strictly blocked.</p>
+          </div>
+        ` : `
+          <div class="p-card" style="background:#F8FAFC;">
+            <strong style="font-size:13px;display:block;">No Internet &amp; No AICore</strong>
+            <p style="font-size:12px;color:#475569;margin:6px 0 10px;line-height:1.45;">AI generation is paused offline on unsupported devices—instant manual controls remain active:</p>
+            <div style="display:flex;gap:6px;">
+              <button type="button" data-action="toggle-dnd" class="p-btn-primary" style="padding:8px;font-size:11.5px;">DND: ${state.genUi.dnd ? 'ON' : 'OFF'}</button>
+              <button type="button" data-action="toggle-timer" class="p-btn-ghost" style="padding:8px;font-size:11.5px;">25m Timer</button>
+            </div>
+          </div>
+        `}
+      </div>
+    `;
+  }
+
+  return '';
+}
+
+function getTabIndex(screenId) {
+  if (screenId === 'home' || screenId === 'playground') return 0;
+  if (screenId === 'bot_studio' || screenId === 'bot_gallery') return 1;
+  if (screenId === 'security') return 2;
+  if (screenId === 'settings' || screenId === 'edge_recovery') return 3;
+  return -1;
+}
+
+function renderBottomNav(screenId) {
+  const tabIdx = getTabIndex(screenId);
+  if (tabIdx < 0) return '';
+  return `
+    <div class="p-bottom-nav-wrap">
+      <nav class="p-bottom-nav" style="--tab-index:${tabIdx};" aria-label="iPhone-style floating Mote navigation">
+        <div class="p-nav-pill" aria-hidden="true"></div>
+        <button type="button" data-goto="4" data-tab-idx="0" class="p-nav-item ${tabIdx===0?'active':''}">
+          <svg viewBox="0 0 24 24"><path d="M3 10.5L12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5"/></svg>
+          <span>Home</span>
+        </button>
+        <button type="button" data-goto="5" data-tab-idx="1" class="p-nav-item ${tabIdx===1?'active':''}">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="9.5" cy="11" r="1"/><circle cx="14.5" cy="11" r="1"/><path d="M9.5 15c1.5 1 3.5 1 5 0"/></svg>
+          <span>Bots</span>
+        </button>
+        <button type="button" data-goto="8" data-tab-idx="2" class="p-nav-item ${tabIdx===2?'active':''}">
+          <svg viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/></svg>
+          <span>Security</span>
+        </button>
+        <button type="button" data-goto="11" data-tab-idx="3" class="p-nav-item ${tabIdx===3?'active':''}">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span>Settings</span>
+        </button>
+      </nav>
+    </div>
+  `;
+}
+
+function updateBottomNav(screenId) {
+  const slot = document.getElementById('bottom-nav-slot');
+  const tabIdx = getTabIndex(screenId);
+  if (tabIdx < 0) {
+    slot.innerHTML = '';
+    return;
+  }
+  const existingNav = slot.querySelector('.p-bottom-nav');
+  if (!existingNav) {
+    slot.innerHTML = renderBottomNav(screenId);
+    return;
+  }
+  existingNav.style.setProperty('--tab-index', String(tabIdx));
+  existingNav.querySelectorAll('.p-nav-item').forEach((el) => {
+    const isAct = Number(el.dataset.tabIdx) === tabIdx;
+    el.classList.toggle('active', isAct);
+  });
+}
+
+function renderAll() {
+  const sc = SCREENS[state.currentIndex];
+
+  // Top airplane button
+  const airBtn = document.getElementById('btn-airplane');
+  airBtn.innerHTML = `<svg class="ico-svg" viewBox="0 0 24 24"><path d="M17.8 19.2L16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg><span>${state.airplaneMode ? 'Airplane Mode: ON (Offline Nano 4)' : 'Airplane Mode: OFF'}</span>`;
+  airBtn.className = 'ctrl-btn' + (state.airplaneMode ? ' airplane-on' : '');
+
+  // Flow rail
+  const flowList = document.getElementById('flow-list');
+  flowList.innerHTML = SCREENS.map((s, idx) => `
+    <button type="button" data-goto="${idx}" class="flow-step ${idx === state.currentIndex ? 'active' : ''}">
+      <span class="step-num">${s.num}</span>
+      <span>${s.title}</span>
+    </button>
+  `).join('');
+
+  // Status bar & gesture bar theme
+  const sb = document.getElementById('status-bar');
+  const gb = document.getElementById('gesture-bar');
+  const phoneScreen = document.getElementById('phone-screen');
+  if (sc.darkChrome) {
+    sb.className = 'status-bar dark';
+    gb.className = 'gesture-bar dark';
+    phoneScreen.style.background = '#0B0D1D';
+  } else {
+    sb.className = 'status-bar light';
+    gb.className = 'gesture-bar';
+    phoneScreen.style.background = '#F2F2F7';
+  }
+  document.getElementById('status-icons').innerHTML = renderStatusIcons(sc.darkChrome);
+
+  // Screen content with directional iOS-style page transition when switching screens
+  const bodyEl = document.getElementById('screen-body');
+  const prevIdx = state._lastRenderedIdx;
+  const changedScreen = state._lastRenderedScreen !== sc.id;
+  bodyEl.innerHTML = renderScreenHtml(sc.id);
+  if (changedScreen) {
+    bodyEl.scrollTop = 0;
+    bodyEl.classList.remove('screen-push', 'screen-pop', 'screen-sheet', 'screen-tab');
+    void bodyEl.offsetWidth;
+    let animClass = 'screen-push';
+    if (sc.id === 'gen_ui') {
+      animClass = 'screen-sheet';
+    } else if (prevIdx !== undefined && getTabIndex(SCREENS[prevIdx].id) >= 0 && getTabIndex(sc.id) >= 0 && getTabIndex(SCREENS[prevIdx].id) !== getTabIndex(sc.id)) {
+      animClass = 'screen-tab';
+    } else if (prevIdx !== undefined && state.currentIndex < prevIdx) {
+      animClass = 'screen-pop';
+    }
+    bodyEl.classList.add(animClass);
+    state._lastRenderedScreen = sc.id;
+    state._lastRenderedIdx = state.currentIndex;
+  }
+  updateBottomNav(sc.id);
+  document.getElementById('pager-label').textContent = `${sc.num} / ${String(SCREENS.length).padStart(2, '0')}`;
+
+  // Brightness dimmer effect when on GenUI or after adjusting brightness
+  const veil = document.getElementById('brightness-veil');
+  veil.style.opacity = ((100 - state.genUi.brightness) / 145).toFixed(2);
+
+  // Spec column
+  document.getElementById('spec-col').innerHTML = `
+    <span class="spec-route">${sc.route}</span>
+    <h2>${sc.num} · ${sc.title}</h2>
+    <p>${sc.summary}</p>
+    <div class="spec-box">
+      <h3>Android &amp; Firebase APIs</h3>
+      <div class="api-chips">${sc.apis.map(a => `<span class="api-chip">${a}</span>`).join('')}</div>
+    </div>
+    <div class="spec-box">
+      <h3>Interactive Notes</h3>
+      <ul class="spec-bullets">${sc.notes.map(n => `<li>${n}</li>`).join('')}</ul>
+    </div>
+    <div class="spec-box" style="display:flex;align-items:center;gap:12px;">
+      <svg width="46" height="46" aria-label="Mote App Icon"><use href="#mote-app-icon-svg"/></svg>
+      <div style="font-size:12.5px;color:#475569;line-height:1.45;">
+        <strong style="color:#0F172A;display:block;">Embedded Vector Assets</strong>
+        All screens render your real vectorized Mote SVG brand pack inline.
+      </div>
+    </div>
+  `;
+
+  // Bind range inputs inside phone for zero-jitter 120fps live updates
+  const opInp = document.getElementById('inp-opacity');
+  if (opInp) {
+    opInp.addEventListener('input', (e) => {
+      state.editingBot.opacity = Number(e.target.value);
+      const lbl = document.getElementById('lbl-opacity');
+      if (lbl) lbl.textContent = `${state.editingBot.opacity}%`;
+      const orb = document.getElementById('bot-preview-orb');
+      if (orb) orb.style.opacity = String(state.editingBot.opacity / 100);
+    });
+  }
+  const brInp = document.getElementById('inp-brightness');
+  if (brInp) {
+    brInp.addEventListener('input', (e) => {
+      state.genUi.brightness = Number(e.target.value);
+      const lbl = document.getElementById('lbl-brightness');
+      if (lbl) lbl.textContent = `${state.genUi.brightness}%`;
+      const v = document.getElementById('brightness-veil');
+      if (v) v.style.opacity = ((100 - state.genUi.brightness) / 145).toFixed(2);
+    });
+  }
+
+  renderToast();
+
+  // Gallery mode
+  const ws = document.getElementById('interactive-workspace');
+  const gv = document.getElementById('gallery-view');
+  if (state.viewMode === 'gallery') {
+    ws.classList.add('hidden');
+    gv.classList.add('open');
+    renderGallery();
+  } else {
+    ws.classList.remove('hidden');
+    gv.classList.remove('open');
+  }
+}
+
+function renderGallery() {
+  const grid = document.getElementById('gallery-grid');
+  grid.innerHTML = SCREENS.map((s, idx) => `
+    <div class="gallery-card" data-pick-gallery="${idx}">
+      <div class="mini-phone">
+        <div class="mini-inner" style="background:${s.darkChrome ? '#0B0D1D' : '#FFFFFF'};">
+          <div class="status-bar ${s.darkChrome ? 'dark' : 'light'}">
+            <span>03:56</span>
+            <div class="status-icons">${renderStatusIcons(s.darkChrome)}</div>
+          </div>
+          <div class="screen-body">${renderScreenHtml(s.id)}</div>
+          ${renderBottomNav(s.id)}
+          <div class="gesture-bar ${s.darkChrome ? 'dark' : ''}"><div class="gesture-pill"></div></div>
+        </div>
+      </div>
+      <div class="gallery-meta">
+        <span>${s.num} · ${s.title}</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#1D4ED8;">Open →</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+// Delegated event handling for all interactive controls
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('button, [data-pick-gallery]');
+  if (!btn) return;
+
+  if (btn.id === 'btn-airplane') {
+    state.airplaneMode = !state.airplaneMode;
+    showToast(state.airplaneMode ? 'Airplane Mode ON — Local Gemini Nano 4 active' : 'Online — Hybrid Nano 4 + Flash ready');
+    renderAll();
+    return;
+  }
+  if (btn.id === 'btn-mode-interactive') {
+    state.viewMode = 'interactive';
+    document.getElementById('btn-mode-interactive').classList.add('active');
+    document.getElementById('btn-mode-gallery').classList.remove('active');
+    renderAll();
+    return;
+  }
+  if (btn.id === 'btn-mode-gallery') {
+    state.viewMode = 'gallery';
+    document.getElementById('btn-mode-gallery').classList.add('active');
+    document.getElementById('btn-mode-interactive').classList.remove('active');
+    renderAll();
+    return;
+  }
+  if (btn.id === 'btn-prev') {
+    state.currentIndex = (state.currentIndex - 1 + SCREENS.length) % SCREENS.length;
+    renderAll();
+    return;
+  }
+  if (btn.id === 'btn-next') {
+    state.currentIndex = (state.currentIndex + 1) % SCREENS.length;
+    renderAll();
+    return;
+  }
+
+  if (btn.dataset.pickGallery !== undefined) {
+    state.currentIndex = Number(btn.dataset.pickGallery);
+    state.viewMode = 'interactive';
+    document.getElementById('btn-mode-interactive').classList.add('active');
+    document.getElementById('btn-mode-gallery').classList.remove('active');
+    renderAll();
+    return;
+  }
+
+  if (btn.dataset.goto !== undefined) {
+    state.currentIndex = Number(btn.dataset.goto);
+    if (btn.dataset.toast) showToast(btn.dataset.toast);
+    renderAll();
+    return;
+  }
+
+  if (btn.dataset.modelStatus) {
+    state.modelStatus = btn.dataset.modelStatus;
+    state.downloadPct = 0;
+    renderAll();
+    return;
+  }
+
+  if (btn.dataset.perm) {
+    const k = btn.dataset.perm;
+    state.perms[k] = !state.perms[k];
+    btn.classList.toggle('on', state.perms[k]);
+    showToast(state.perms[k] ? `Granted ${k} permission` : `Paused ${k} permission`);
+    return;
+  }
+
+  if (btn.dataset.toggleBot) {
+    const b = state.bots.find(x => x.id === btn.dataset.toggleBot);
+    if (b) {
+      b.active = !b.active;
+      btn.classList.toggle('on', b.active);
+      showToast(b.active ? `${b.name} bot spawned onscreen` : `${b.name} bot hidden`);
+    }
+    return;
+  }
+
+  if (btn.dataset.openGenui) {
+    state.genUi.cardType = btn.dataset.openGenui;
+    state.currentIndex = 7;
+    renderAll();
+    return;
+  }
+
+  if (btn.dataset.botColor) {
+    state.editingBot.color = btn.dataset.botColor;
+    renderAll();
+    return;
+  }
+
+  if (btn.dataset.botMode) {
+    state.editingBot.mode = btn.dataset.botMode;
+    renderAll();
+    return;
+  }
+
+  if (btn.dataset.genuiTab) {
+    state.genUi.cardType = btn.dataset.genuiTab;
+    renderAll();
+    return;
+  }
+
+  if (btn.dataset.pickReply) {
+    state.genUi.selectedReply = btn.dataset.pickReply;
+    renderAll();
+    return;
+  }
+
+  if (btn.dataset.sec) {
+    const k = btn.dataset.sec;
+    state.security[k] = !state.security[k];
+    btn.classList.toggle('on', state.security[k]);
+    showToast(state.security[k] ? 'Protection enabled' : 'Protection paused');
+    return;
+  }
+
+  const act = btn.dataset.action;
+  if (act === 'dismiss-toast') {
+    state.toast = null;
+    renderToast();
+  } else if (act === 'sim-download') {
+    state.downloadPct = 20;
+    renderAll();
+    const iv = setInterval(() => {
+      state.downloadPct = Math.min(100, state.downloadPct + 20);
+      if (state.downloadPct >= 100) {
+        clearInterval(iv);
+        state.modelStatus = 'AVAILABLE';
+        showToast('Gemini Nano 4 downloaded & warmed up!');
+      }
+      renderAll();
+    }, 220);
+  } else if (act === 'save-bot') {
+    state.bots[0].color = state.editingBot.color;
+    state.bots[0].opacity = state.editingBot.opacity;
+    state.bots[0].mode = state.editingBot.mode;
+    state.bots[0].active = true;
+    showToast('Saved to Firestore & updated floating bot!');
+    state.currentIndex = 6;
+    renderAll();
+  } else if (act === 'toggle-dnd') {
+    state.genUi.dnd = !state.genUi.dnd;
+    if (btn.classList.contains('sw')) {
+      btn.classList.toggle('on', state.genUi.dnd);
+    } else {
+      renderAll();
+    }
+  } else if (act === 'toggle-timer') {
+    state.genUi.timerRunning = !state.genUi.timerRunning;
+    showToast(state.genUi.timerRunning ? '25-minute Focus Timer started' : 'Timer stopped');
+    renderAll();
+  } else if (act === 'apply-focus') {
+    state.auditLog.unshift({ time: 'Now', bot: 'Focus', action: `Brightness ${state.genUi.brightness}% + DND ${state.genUi.dnd ? 'ON' : 'OFF'}`, engine: 'nano' });
+    showToast('Applied locally via Gemini Nano 4!');
+    renderAll();
+  } else if (act === 'toggle-tier3') {
+    state.security.showTier3Modal = !state.security.showTier3Modal;
+    renderAll();
+  } else if (act === 'confirm-tier3') {
+    state.security.showTier3Modal = false;
+    state.security.showHud = true;
+    state.auditLog.unshift({ time: 'Now', bot: 'Reply', action: 'Biometric confirmed message send', engine: 'flash' });
+    showToast('Biometric verified — executing safely');
+    renderAll();
+  } else if (act === 'start-hud') {
+    state.security.showHud = true;
+    renderAll();
+  } else if (act === 'stop-hud') {
+    state.security.showHud = false;
+    showToast('AccessibilityService halted immediately');
+    renderAll();
+  } else if (act === 'toggle-json') {
+    state.playground.showJson = !state.playground.showJson;
+    renderAll();
+  } else if (act === 'toggle-haptic') {
+    state.settings.haptic = !state.settings.haptic;
+    btn.classList.toggle('on', state.settings.haptic);
+    showToast(state.settings.haptic ? 'Haptic feedback enabled' : 'Haptic feedback muted');
+  }
+
+  if (btn.dataset.installPreset) {
+    const pid = btn.dataset.installPreset;
+    if (!state.installedPresets[pid]) {
+      state.installedPresets[pid] = true;
+      state.bots.push({
+        id: pid,
+        name: btn.dataset.presetName,
+        role: 'Installed Preset',
+        color: btn.dataset.presetColor,
+        active: true,
+        mode: 'PREFER_ON_DEVICE',
+        opacity: 85,
+        size: 52
+      });
+      showToast(`${btn.dataset.presetName} bot added to Home Hub!`);
+      renderAll();
+    }
+  }
+
+  if (btn.dataset.edge) {
+    state.edgeCase = btn.dataset.edge;
+    renderAll();
+  }
+});
+
+renderAll();
+</script>
+</body>
+</html>
