@@ -1,0 +1,150 @@
+{
+  "entities": {
+    "BotPersona": {
+      "title": "BotPersona",
+      "description": "User-configured floating Mote AI assistant persona synced across devices.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owning user."
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the bot persona (1-50 chars)."
+        },
+        "role": {
+          "type": "string",
+          "description": "Short role description of the bot (1-80 chars)."
+        },
+        "colorHex": {
+          "type": "integer",
+          "description": "ARGB color integer representing the bot theme color."
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Whether this bot persona is currently active."
+        },
+        "opacityPercent": {
+          "type": "integer",
+          "description": "Overlay opacity percentage (10-100)."
+        },
+        "inferenceMode": {
+          "type": "string",
+          "enum": [
+            "PREFER_ON_DEVICE",
+            "ONLY_ON_DEVICE",
+            "PREFER_IN_CLOUD",
+            "ONLY_IN_CLOUD"
+          ],
+          "description": "Preferred AI routing mode for the bot."
+        },
+        "systemPrompt": {
+          "type": "string",
+          "description": "System instruction guiding the bot's Generative UI output (1-1000 chars)."
+        },
+        "allowScreenRead": {
+          "type": "boolean",
+          "description": "Whether the bot is permitted to read redacted screen context."
+        },
+        "allowActions": {
+          "type": "boolean",
+          "description": "Whether the bot is permitted to suggest device control actions."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp() on creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp() on creation and update."
+        }
+      },
+      "required": [
+        "userId",
+        "name",
+        "role",
+        "colorHex",
+        "active",
+        "opacityPercent",
+        "inferenceMode",
+        "systemPrompt",
+        "allowScreenRead",
+        "allowActions",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Single user prompt or assistant response entry displayed in the FloatingAssistantView chat history.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owning user."
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "USER",
+            "ASSISTANT"
+          ],
+          "description": "Message author role."
+        },
+        "botId": {
+          "type": "string",
+          "description": "Identifier of the bot persona handling the message (1-128 chars)."
+        },
+        "botName": {
+          "type": "string",
+          "description": "Display name of the bot persona (1-50 chars)."
+        },
+        "text": {
+          "type": "string",
+          "description": "Message text content (1-2000 chars)."
+        },
+        "engineUsed": {
+          "type": "string",
+          "enum": [
+            "LOCAL_NANO",
+            "CLOUD_FLASH",
+            "OFFLINE_FALLBACK",
+            "NONE"
+          ],
+          "description": "Inference engine label for assistant responses, or NONE for user prompts."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp() on creation."
+        }
+      },
+      "required": [
+        "userId",
+        "role",
+        "botId",
+        "botName",
+        "text",
+        "engineUsed",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/bots/{botId}": {
+      "schema": {
+        "$ref": "#/entities/BotPersona"
+      },
+      "description": "Per-user collection of Mote bot personas."
+    },
+    "/users/{userId}/chatHistory/{messageId}": {
+      "schema": {
+        "$ref": "#/entities/ChatMessage"
+      },
+      "description": "Per-user FloatingAssistantView conversation history keyed by user UID."
+    }
+  }
+}

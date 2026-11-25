@@ -1,0 +1,114 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidInferenceMode(mode) {
+      return mode in ['PREFER_ON_DEVICE', 'ONLY_ON_DEVICE', 'PREFER_IN_CLOUD', 'ONLY_IN_CLOUD'];
+    }
+
+    function isValidBotPersona(data, userId) {
+      return data.keys().hasAll([
+               'userId', 'name', 'role', 'colorHex', 'active',
+               'opacityPercent', 'inferenceMode', 'systemPrompt',
+               'allowScreenRead', 'allowActions', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'name', 'role', 'colorHex', 'active',
+               'opacityPercent', 'inferenceMode', 'systemPrompt',
+               'allowScreenRead', 'allowActions', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId == userId && data.userId == request.auth.uid &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 50 &&
+             data.role is string && data.role.size() >= 1 && data.role.size() <= 80 &&
+             data.colorHex is int &&
+             data.active is bool &&
+             data.opacityPercent is int && data.opacityPercent >= 10 && data.opacityPercent <= 100 &&
+             data.inferenceMode is string && isValidInferenceMode(data.inferenceMode) &&
+             data.systemPrompt is string && data.systemPrompt.size() >= 1 && data.systemPrompt.size() <= 1000 &&
+             data.allowScreenRead is bool &&
+             data.allowActions is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidChatMessage(data, userId) {
+      return data.keys().hasAll([
+               'userId', 'role', 'botId', 'botName', 'text', 'engineUsed', 'createdAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'role', 'botId', 'botName', 'text', 'engineUsed', 'createdAt'
+             ]) &&
+             data.userId is string && data.userId == userId && data.userId == request.auth.uid &&
+             data.role is string && data.role in ['USER', 'ASSISTANT'] &&
+             data.botId is string && data.botId.size() >= 1 && data.botId.size() <= 128 &&
+             data.botName is string && data.botName.size() >= 1 && data.botName.size() <= 50 &&
+             data.text is string && data.text.size() >= 1 && data.text.size() <= 2000 &&
+             data.engineUsed is string && data.engineUsed in ['LOCAL_NANO', 'CLOUD_FLASH', 'OFFLINE_FALLBACK', 'NONE'] &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    match /users/{userId}/bots/{botId} {
+      allow get: if isOwner(userId) && isValidId(botId);
+      allow list: if isOwner(userId);
+
+      allow create: if isOwner(userId) &&
+                       isValidId(botId) &&
+                       isValidBotPersona(incoming(), userId);
+
+      allow update: if isOwner(userId) &&
+                       isValidId(botId) &&
+                       isValidBotPersona(incoming(), userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         // Action: Toggle active state
+                         incoming().diff(existing()).affectedKeys().hasOnly(['active', 'updatedAt']) ||
+                         // Action: Update bot configuration
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'name', 'role', 'colorHex', 'active', 'opacityPercent',
+                           'inferenceMode', 'systemPrompt', 'allowScreenRead', 'allowActions', 'updatedAt'
+                         ])
+                       );
+
+      allow delete: if isOwner(userId) && isValidId(botId);
+    }
+
+    match /users/{userId}/chatHistory/{messageId} {
+      allow get: if isOwner(userId) && isValidId(messageId);
+      allow list: if isOwner(userId);
+
+      allow create: if isOwner(userId) &&
+                       isValidId(messageId) &&
+                       isValidChatMessage(incoming(), userId);
+
+      // Chat messages are append-only; disallow in-place edits
+      allow update: if false;
+
+      allow delete: if isOwner(userId) && isValidId(messageId);
+    }
+  }
+}

@@ -1,4 +1,0 @@
-<resources>
-    <string name="app_name">Mote</string>
-    <string name="mote_accessibility_desc">Reads active screen text only when you tap a Mote bot, skips passwords and banking apps, and performs actions only with your confirmation.</string>
-</resources>

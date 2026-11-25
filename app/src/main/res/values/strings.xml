@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Mote</string>
+    <string name="mote_accessibility_desc">Reads active screen text only when you tap a Mote bot, skips passwords and banking apps, and performs actions only with your confirmation.</string>
+    <string name="floating_orb_desc">Open floating Mote AI assistant</string>
+    <string name="floating_minimize_desc">Minimize floating assistant to orb</string>
+    <string name="floating_dismiss_desc">Hide floating assistant overlay</string>
+    <string name="floating_send_desc">Send prompt to Mote AI</string>
+</resources>
