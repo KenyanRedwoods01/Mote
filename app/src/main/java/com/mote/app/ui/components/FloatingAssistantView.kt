@@ -1,6 +1,14 @@
 package com.mote.app.ui.components
 
+import android.Manifest
+import android.app.Activity
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.speech.RecognizerIntent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
@@ -33,12 +41,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.DragHandle
-import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.Minimize
-import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -52,13 +56,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -66,27 +70,43 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
+import androidx.core.content.ContextCompat
 import com.mote.app.R
+import com.mote.app.ai.HybridAiRouter
+import com.mote.app.ai.InChatUiPart
+import com.mote.app.ai.LlmConfig
 import com.mote.app.ai.MoteAction
+import com.mote.app.control.ClockToolsManager
+import com.mote.app.control.CountdownTimerItem
+import com.mote.app.control.StopwatchUiState
+import com.mote.app.data.LoadedLocalModelState
+import com.mote.app.data.LocalModelEntry
+import com.mote.app.data.db.CalendarEventEntity
+import com.mote.app.data.db.ClockAlarmEntity
 import com.mote.app.model.BotPersona
 import com.mote.app.model.ChatMessage
 import com.mote.app.model.ChatRole
 import com.mote.app.ui.AiCardUiState
 import com.mote.app.ui.ChatHistoryUiState
+import com.mote.app.ui.ChatStreamUiState
+import com.mote.app.ui.theme.LocalMoteColors
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
- * Draggable, edge-snapping, overlay-capable Jetpack Compose surface for the Mote AI interface.
+ * Real-time draggable, edge-snapping, multi-bot floating AI overlay surface for Mote.
  *
- * Uses a unified physics-driven spring transition ([updateTransition] + [spring]) to morph
- * continuously between:
- * 1. Minimized floating orb: drags smoothly at 120 Hz, scales up with haptic feedback, shows a
- *    magnetic bottom-center dismiss zone, and spring-snaps to the nearest screen edge.
- * 2. Full expanded input interface: springs out directly from the orb's position, width, corner
- *    radius, and elevation into a movable frosted-glass AI control card with persona switching,
- *    quick suggestion chips, prompt input, shimmer loading, inline Generative UI controls, and
- *    live conversation history.
+ * Features:
+ * 1. Minimized Multi-Bot Floating Dock: draggable main orb with magnetic dismiss zone, live
+ *    floating mini-orbs for every active bot persona on screen, and a live ticking telemetry HUD
+ *    showing active timers, stopwatch, or streaming AI status in real time.
+ * 2. Expanded Floating Command Panel: spring-morphs smoothly out of the orb into a movable
+ *    frosted-glass real-time chat & tool surface supporting:
+ *    - Real-time Cloud Gemini API & Downloaded LiteRT-LM local model switching
+ *    - Live streaming chat + inline AlarmManager, Countdown Timer, Stopwatch, Calendar Provider,
+ *      and Generative UI widgets
+ *    - Direct Control Card generation mode
+ *    - Google Speech Recognition voice input with haptic feedback
  */
 @Composable
 fun FloatingAssistantView(
@@ -99,22 +119,151 @@ fun FloatingAssistantView(
     chatHistoryState: ChatHistoryUiState = ChatHistoryUiState.Success(emptyList()),
     isCloudSynced: Boolean = false,
     onClearHistory: () -> Unit = {},
-    initiallyExpanded: Boolean = false
+    initiallyExpanded: Boolean = false,
+    chatStreamState: ChatStreamUiState = ChatStreamUiState.Idle,
+    inChatUiPartsByText: Map<String, List<InChatUiPart>> = emptyMap(),
+    clockAlarms: List<ClockAlarmEntity> = emptyList(),
+    clockTimers: List<CountdownTimerItem> = emptyList(),
+    clockStopwatch: StopwatchUiState = StopwatchUiState(),
+    calendarEvents: List<CalendarEventEntity> = emptyList(),
+    capturedScreenshots: Map<String, Bitmap> = emptyMap(),
+    llmConfig: LlmConfig = LlmConfig(),
+    localModels: List<LocalModelEntry> = emptyList(),
+    loadedLocalModel: LoadedLocalModelState? = null,
+    loadingLocalModelId: String? = null,
+    preferLoadedLocalChat: Boolean = false,
+    onSendStreamingChat: ((prompt: String, bot: BotPersona?) -> Unit)? = null,
+    onStopStreaming: () -> Unit = {},
+    onSelectCloudModel: (String) -> Unit = {},
+    onSelectLocalModel: (String) -> Unit = {},
+    onOpenModelHub: () -> Unit = {},
+    onToggleAlarm: (String, Boolean) -> Unit = { _, _ -> },
+    onShiftAlarmMinutes: (String, Int) -> Unit = { _, _ -> },
+    onDeleteAlarm: (String) -> Unit = {},
+    onSyncAlarmToSystem: (ClockAlarmEntity) -> Unit = {},
+    onControlTimer: (String, String) -> Unit = { _, _ -> },
+    onAddTimerSeconds: (String, Int) -> Unit = { _, _ -> },
+    onControlStopwatch: (String) -> Unit = {},
+    onDeleteCalendarEvent: (String) -> Unit = {},
+    onSyncCalendarEventToSystem: (CalendarEventEntity) -> Unit = {},
+    onAnalyzeScreenshot: (String, String) -> Unit = { _, _ -> }
 ) {
+    val context = LocalContext.current
     val density = LocalDensity.current
-    val haptics = LocalHapticFeedback.current
+    val tokens = LocalMoteColors.current
+    val hapticManager = rememberHapticFeedbackManager()
     val scope = rememberCoroutineScope()
 
     var isExpanded by remember { mutableStateOf(initiallyExpanded) }
+    var showBotDockStack by remember { mutableStateOf(true) }
     var isDraggingOrb by remember { mutableStateOf(false) }
     var isOverDismissZone by remember { mutableStateOf(false) }
     var promptText by remember { mutableStateOf("") }
+    var promptPrefixBeforeSpeech by remember { mutableStateOf("") }
+    var speechState by remember { mutableStateOf(SpeechRecognitionState()) }
+    var useLiveStreamMode by remember { mutableStateOf(onSendStreamingChat != null) }
+    var showModelSwitcher by remember { mutableStateOf(false) }
+
+    val speechController = remember(context) {
+        GoogleSpeechInputController(
+            context = context,
+            onPartialText = { partial ->
+                promptText = if (promptPrefixBeforeSpeech.isBlank()) partial else "$promptPrefixBeforeSpeech $partial"
+            },
+            onFinalText = { finalText ->
+                promptText = if (promptPrefixBeforeSpeech.isBlank()) finalText else "$promptPrefixBeforeSpeech $finalText"
+                promptPrefixBeforeSpeech = ""
+            },
+            onStateChanged = { next ->
+                speechState = next
+            }
+        )
+    }
+
+    DisposableEffect(speechController) {
+        onDispose { speechController.release() }
+    }
+
+    LaunchedEffect(isExpanded) {
+        if (!isExpanded && speechState.isListening) {
+            speechController.stopListening()
+        }
+    }
+
+    val fallbackSpeechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val spoken = result.data
+                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+                ?.trim()
+            if (!spoken.isNullOrBlank()) {
+                promptText = if (promptText.isBlank()) spoken else "${promptText.trim()} $spoken"
+                speechState = SpeechRecognitionState()
+            }
+        }
+    }
+
+    fun startOrStopVoiceInput() {
+        if (speechState.isListening) {
+            hapticManager.onVoiceStop()
+            speechController.stopListening()
+            return
+        }
+        hapticManager.onVoiceStart()
+        promptPrefixBeforeSpeech = promptText.trim()
+        if (speechController.isOnDeviceRecognizerAvailable()) {
+            speechController.startListening()
+        } else {
+            val speechIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, java.util.Locale.getDefault())
+                putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak your Mote prompt...")
+            }
+            try {
+                fallbackSpeechLauncher.launch(speechIntent)
+            } catch (_: Exception) {
+                speechState = SpeechRecognitionState(errorText = "Google Speech Recognition is unavailable on this device.")
+            }
+        }
+    }
+
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            startOrStopVoiceInput()
+        } else {
+            speechState = SpeechRecognitionState(errorText = "Microphone permission is needed for voice input.")
+        }
+    }
+
+    fun requestVoiceInput() {
+        if (speechState.isListening) {
+            startOrStopVoiceInput()
+            return
+        }
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            startOrStopVoiceInput()
+        } else {
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     BackHandler(enabled = isExpanded) {
+        hapticManager.onCollapse()
         isExpanded = false
     }
 
     val availableBots = remember(bots) { bots.ifEmpty { BotPersona.defaultStarters } }
+    val activeFloatingBots = remember(availableBots) {
+        availableBots.filter { it.active }.ifEmpty { availableBots }.take(4)
+    }
     var selectedBotId by remember(availableBots) {
         mutableStateOf(availableBots.firstOrNull { it.active }?.id ?: availableBots.first().id)
     }
@@ -123,12 +272,61 @@ fun FloatingAssistantView(
     }
     val accentColor = Color(selectedBot.colorHex)
 
-    val quickSuggestions = remember(selectedBot.id) {
-        when (selectedBot.id) {
-            "reply" -> listOf("Draft 3 polite replies", "Summarize key points", "Quick confirm reply")
-            "saver" -> listOf("Dim screen to 20%", "Enable DND for night", "Battery saver controls")
-            else -> listOf("Focus Mode (25m)", "Dim screen & DND", "Start 10m break timer")
+    val activeCloudMeta = HybridAiRouter.supportedModels.firstOrNull { it.id == llmConfig.modelName }
+        ?: HybridAiRouter.supportedModels.first()
+    val activeLocalModel = if (preferLoadedLocalChat) loadedLocalModel else null
+    val activeModelLabel = activeLocalModel?.displayName ?: activeCloudMeta.displayName
+    val isStreaming = chatStreamState is ChatStreamUiState.Streaming
+    val isBusy = isStreaming || aiState is AiCardUiState.Loading
+
+    val runningTimer = clockTimers.firstOrNull { it.isRunning }
+    val liveHudLabel = remember(isStreaming, runningTimer?.remainingSeconds, clockStopwatch.isRunning, clockStopwatch.elapsedMs) {
+        when {
+            isStreaming -> "AI Live..."
+            runningTimer != null -> "Timer ${ClockToolsManager.formatDurationSeconds(runningTimer.remainingSeconds)}"
+            clockStopwatch.isRunning -> "SW ${ClockToolsManager.formatStopwatchMs(clockStopwatch.elapsedMs)}"
+            else -> null
         }
+    }
+
+    val quickSuggestions = remember(selectedBot.id, useLiveStreamMode) {
+        if (useLiveStreamMode && onSendStreamingChat != null) {
+            when (selectedBot.id) {
+                "reply" -> listOf(
+                    "Show my upcoming calendar events",
+                    "Add event tomorrow 2 PM Product Sync",
+                    "Draft 3 concise replies"
+                )
+                "saver" -> listOf(
+                    "Start a 15 minute focus timer",
+                    "Set a 7:30 AM weekday alarm",
+                    "Start stopwatch for battery run"
+                )
+                else -> listOf(
+                    "Start 5m Focus Timer",
+                    "Set 7:30 AM Morning Alarm",
+                    "Show my calendar events",
+                    "Start the stopwatch"
+                )
+            }
+        } else {
+            when (selectedBot.id) {
+                "reply" -> listOf("Draft 3 polite replies", "Summarize key points", "Quick confirm reply")
+                "saver" -> listOf("Dim screen to 20%", "Enable DND for night", "Battery saver controls")
+                else -> listOf("Focus Mode (25m)", "Dim screen & DND", "Start 10m break timer")
+            }
+        }
+    }
+
+    fun dispatchPrompt(text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        if (useLiveStreamMode && onSendStreamingChat != null) {
+            onSendStreamingChat(trimmed, selectedBot)
+        } else {
+            onSubmitPrompt(trimmed, selectedBot)
+        }
+        promptText = ""
     }
 
     // Unified physics-driven spring transition for morphing minimized icon -> full input interface
@@ -193,9 +391,9 @@ fun FloatingAssistantView(
         }
 
         // Expanded floating card draggable position
-        val cardWidthDp = minOf(maxWidth - 24.dp, 368.dp)
+        val cardWidthDp = minOf(maxWidth - 20.dp, 376.dp)
         val cardWidthPx = with(density) { cardWidthDp.toPx() }
-        val cardMaxHeightDp = (maxHeight - 172.dp).coerceIn(280.dp, 520.dp)
+        val cardMaxHeightDp = (maxHeight - 156.dp).coerceIn(300.dp, 580.dp)
         val maxCardX = (containerWidthPx - cardWidthPx - edgeMarginPx).coerceAtLeast(edgeMarginPx)
         val maxCardY = (containerHeightPx - with(density) { 240.dp.toPx() }).coerceAtLeast(topSafePx)
         val cardOffsetX = remember { Animatable(((containerWidthPx - cardWidthPx) / 2f).coerceIn(edgeMarginPx, maxCardX)) }
@@ -206,7 +404,7 @@ fun FloatingAssistantView(
             val centeredX = ((containerWidthPx - cardWidthPx) / 2f).coerceIn(edgeMarginPx, maxCardX)
             if (!hasInitializedCard && containerWidthPx > 0f) {
                 cardOffsetX.snapTo(centeredX)
-                cardOffsetY.snapTo((topSafePx + with(density) { 12.dp.toPx() }).coerceAtMost(maxCardY))
+                cardOffsetY.snapTo((topSafePx + with(density) { 10.dp.toPx() }).coerceAtMost(maxCardY))
                 hasInitializedCard = true
             } else {
                 cardOffsetX.snapTo(cardOffsetX.value.coerceIn(edgeMarginPx, maxCardX))
@@ -219,17 +417,90 @@ fun FloatingAssistantView(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFF0B0D1D).copy(alpha = 0.22f * clampedProgress))
+                    .background(Color(0xFF0B0D1D).copy(alpha = 0.24f * clampedProgress))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                         enabled = isExpanded
                     ) {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        hapticManager.onCollapse()
                         isExpanded = false
                     }
                     .testTag("floating_assistant_backdrop")
             )
+        }
+
+        // Real-time Floating Multi-Bot Stack + Live Telemetry Mini-HUD anchored above the minimized orb
+        if (!isExpanded && !isDraggingOrb && clampedProgress < 0.05f) {
+            val secondaryBots = activeFloatingBots.filter { it.id != selectedBot.id }.take(3)
+            val dockedOnRight = orbOffsetX.value + orbSizePx / 2f >= containerWidthPx / 2f
+            val stackItemPx = with(density) { 44.dp.toPx() }
+            val stackGapPx = with(density) { 8.dp.toPx() }
+
+            // Floating mini-bot orbs stacked vertically above the primary orb
+            if (showBotDockStack && secondaryBots.isNotEmpty()) {
+                secondaryBots.forEachIndexed { idx, bot ->
+                    val miniY = (orbOffsetY.value - (idx + 1) * (stackItemPx + stackGapPx))
+                        .coerceAtLeast(topSafePx)
+                    val miniX = (orbOffsetX.value + (orbSizePx - stackItemPx) / 2f)
+                        .coerceIn(edgeMarginPx, (containerWidthPx - stackItemPx - edgeMarginPx).coerceAtLeast(edgeMarginPx))
+                    FloatingMiniBotOrb(
+                        bot = bot,
+                        onTap = {
+                            selectedBotId = bot.id
+                            hapticManager.onExpand()
+                            isExpanded = true
+                        },
+                        modifier = Modifier
+                            .offset { IntOffset(miniX.roundToInt(), miniY.roundToInt()) }
+                            .testTag("floating_mini_bot_${bot.id}")
+                    )
+                }
+            }
+
+            // Live ticking Telemetry Mini-HUD Pill (countdown timer, stopwatch, or live AI stream)
+            liveHudLabel?.let { hudText ->
+                val pillWidthPx = with(density) { 126.dp.toPx() }
+                val pillX = if (dockedOnRight) {
+                    (orbOffsetX.value - pillWidthPx - with(density) { 8.dp.toPx() }).coerceAtLeast(edgeMarginPx)
+                } else {
+                    (orbOffsetX.value + orbSizePx + with(density) { 8.dp.toPx() })
+                        .coerceAtMost((containerWidthPx - pillWidthPx - edgeMarginPx).coerceAtLeast(edgeMarginPx))
+                }
+                val pillY = (orbOffsetY.value + with(density) { 14.dp.toPx() }).coerceIn(topSafePx, maxOrbY)
+
+                Row(
+                    modifier = Modifier
+                        .offset { IntOffset(pillX.roundToInt(), pillY.roundToInt()) }
+                        .shadow(8.dp, RoundedCornerShape(999.dp))
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(MoteBrandNavy)
+                        .border(1.dp, if (isStreaming) CloudFlashCobalt else LocalNanoEmerald, RoundedCornerShape(999.dp))
+                        .clickable {
+                            hapticManager.onExpand()
+                            isExpanded = true
+                        }
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                        .testTag("floating_live_hud_pill"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(if (isStreaming) CloudFlashCobalt else LocalNanoEmerald)
+                    )
+                    Text(
+                        text = hudText,
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1
+                    )
+                }
+            }
         }
 
         // Bottom-center magnetic dismiss zone while dragging the minimized orb
@@ -277,8 +548,7 @@ fun FloatingAssistantView(
             }
         }
 
-        // Unified spring-morphing floating container: smoothly interpolates position, width,
-        // corner radius, elevation, and border from minimized orb -> full AI input surface
+        // Unified spring-morphing floating container: minimized orb <-> full real-time AI surface
         val morphedX = lerp(orbOffsetX.value, cardOffsetX.value, expandProgress)
             .coerceIn(0f, (containerWidthPx - orbSizePx).coerceAtLeast(0f))
         val morphedY = lerp(orbOffsetY.value, cardOffsetY.value, expandProgress)
@@ -302,7 +572,6 @@ fun FloatingAssistantView(
                 )
         ) {
             if (!showExpandedContent) {
-                // Minimized floating orb state (and early expansion / late collapse morph phase)
                 Box(
                     modifier = Modifier
                         .size(orbSizeDp)
@@ -317,15 +586,15 @@ fun FloatingAssistantView(
                     FloatingAssistantOrb(
                         accentColor = accentColor,
                         isDragging = isDraggingOrb,
-                        isBusy = aiState is AiCardUiState.Loading,
-                        idleAlpha = (selectedBot.opacityPercent.coerceIn(55, 100) / 100f),
+                        isBusy = isBusy,
+                        idleAlpha = (selectedBot.opacityPercent.coerceIn(60, 100) / 100f),
                         onTap = {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            hapticManager.onExpand()
                             isExpanded = true
                         },
                         onDragStart = {
                             isDraggingOrb = true
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            hapticManager.onOrbGrab()
                         },
                         onDragDelta = { dx, dy ->
                             scope.launch {
@@ -343,7 +612,7 @@ fun FloatingAssistantView(
                                     (orbCenterY - dismissCenterY).toDouble()
                                 ) < with(density) { 78.dp.toPx() }
                                 if (nearDismiss && !isOverDismissZone) {
-                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    hapticManager.onDismissZoneLock()
                                 }
                                 isOverDismissZone = nearDismiss
                             }
@@ -375,7 +644,6 @@ fun FloatingAssistantView(
                     )
                 }
             } else {
-                // Expanded full input surface morphing out of the orb via spring physics
                 val shadowDp = lerp(8.dp, 22.dp, clampedProgress)
                 Surface(
                     modifier = Modifier
@@ -388,8 +656,8 @@ fun FloatingAssistantView(
                         )
                         .testTag("floating_assistant_panel"),
                     shape = morphedShape,
-                    color = Color(0xFAFFFFFF).copy(alpha = 0.94f + 0.04f * surfaceVisualAlpha),
-                    border = BorderStroke(1.dp, Color(0x1F0B0D1D)),
+                    color = tokens.floatingPanelBg.copy(alpha = 0.96f + 0.03f * surfaceVisualAlpha),
+                    border = BorderStroke(1.dp, tokens.border),
                     tonalElevation = 6.dp
                 ) {
                     Column(
@@ -400,13 +668,13 @@ fun FloatingAssistantView(
                                 translationY = (1f - expandedContentAlpha) * with(density) { 14.dp.toPx() }
                             }
                     ) {
-                        // Draggable Surface Header
+                        // Draggable Surface Header with Real-Time Model Switcher Pill
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(
                                     Brush.linearGradient(
-                                        colors = listOf(MoteNavy, Color(0xFF161B38))
+                                        colors = listOf(MoteBrandNavy, Color(0xFF161B38))
                                     )
                                 )
                                 .pointerInput(maxCardX, maxCardY) {
@@ -447,41 +715,78 @@ fun FloatingAssistantView(
                                     ) {
                                         Box(
                                             modifier = Modifier
-                                                .size(32.dp)
+                                                .size(34.dp)
                                                 .clip(CircleShape)
-                                                .background(accentColor.copy(alpha = 0.22f))
-                                                .border(1.dp, accentColor, CircleShape),
+                                                .background(accentColor.copy(alpha = 0.24f))
+                                                .border(1.5.dp, accentColor, CircleShape),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Outlined.AutoAwesome,
                                                 contentDescription = null,
                                                 tint = Color.White,
-                                                modifier = Modifier.size(16.dp)
+                                                modifier = Modifier.size(17.dp)
                                             )
                                         }
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
-                                                text = "${selectedBot.name} Assistant",
+                                                text = "${selectedBot.name} Floating Bot",
                                                 color = Color.White,
-                                                fontSize = 14.5.sp,
+                                                fontSize = 14.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
-                                            Text(
-                                                text = "${selectedBot.role} · Drag bar to move",
-                                                color = Color(0xFFA5B4FC),
-                                                fontSize = 11.sp,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
+                                            Row(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(999.dp))
+                                                    .background(Color(0x26FFFFFF))
+                                                    .clickable { showModelSwitcher = true }
+                                                    .padding(horizontal = 7.dp, vertical = 2.dp)
+                                                    .testTag("floating_model_switcher_pill"),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(6.dp)
+                                                        .clip(CircleShape)
+                                                        .background(if (activeLocalModel != null) LocalNanoEmerald else Color(0xFF60A5FA))
+                                                )
+                                                Text(
+                                                    text = if (activeLocalModel != null) "Local · $activeModelLabel" else "Cloud · $activeModelLabel",
+                                                    color = Color(0xFFE0E7FF),
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Icon(
+                                                    imageVector = Icons.Outlined.SwapHoriz,
+                                                    contentDescription = "Switch AI Model",
+                                                    tint = Color(0xFF93C5FD),
+                                                    modifier = Modifier.size(12.dp)
+                                                )
+                                            }
                                         }
                                     }
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         IconButton(
+                                            onClick = { showBotDockStack = !showBotDockStack },
+                                            modifier = Modifier
+                                                .minimumInteractiveComponentSize()
+                                                .testTag("floating_toggle_dock_stack_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = if (showBotDockStack) Icons.Outlined.Layers else Icons.Outlined.LayersClear,
+                                                contentDescription = "Toggle multi-bot floating stack",
+                                                tint = if (showBotDockStack) LocalNanoEmerald else Color(0xFF94A3B8),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                        IconButton(
                                             onClick = {
-                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                hapticManager.onCollapse()
                                                 isExpanded = false
                                             },
                                             modifier = Modifier
@@ -524,6 +829,49 @@ fun FloatingAssistantView(
                                 .padding(14.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
+                            // Mode Toggle (Real-Time Tools & Chat vs Quick Control Card)
+                            if (onSendStreamingChat != null) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    FilterChip(
+                                        selected = useLiveStreamMode,
+                                        onClick = { useLiveStreamMode = true },
+                                        label = { Text("Live AI + Tools", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold) },
+                                        leadingIcon = {
+                                            Icon(Icons.Outlined.Bolt, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = CloudFlashCobalt,
+                                            selectedLabelColor = Color.White,
+                                            selectedLeadingIconColor = Color.White
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("floating_mode_live_tools")
+                                    )
+                                    FilterChip(
+                                        selected = !useLiveStreamMode,
+                                        onClick = { useLiveStreamMode = false },
+                                        label = { Text("Control Card", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold) },
+                                        leadingIcon = {
+                                            Icon(Icons.Outlined.Tune, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = tokens.primaryActionBg,
+                                            selectedLabelColor = Color.White,
+                                            selectedLeadingIconColor = Color.White,
+                                            containerColor = tokens.surfaceSubtle,
+                                            labelColor = MoteNavy
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("floating_mode_control_card")
+                                    )
+                                }
+                            }
+
                             // Persona Switcher Strip
                             Row(
                                 modifier = Modifier
@@ -553,9 +901,9 @@ fun FloatingAssistantView(
                                             )
                                         },
                                         colors = FilterChipDefaults.filterChipColors(
-                                            selectedContainerColor = MoteNavy,
+                                            selectedContainerColor = tokens.primaryActionBg,
                                             selectedLabelColor = Color.White,
-                                            containerColor = IosCanvas,
+                                            containerColor = tokens.surfaceSubtle,
                                             labelColor = MoteNavy
                                         ),
                                         modifier = Modifier.testTag("floating_persona_chip_${bot.id}")
@@ -563,7 +911,7 @@ fun FloatingAssistantView(
                                 }
                             }
 
-                            // Context-Aware Suggested Prompt Chips
+                            // Context-Aware Suggested Prompt & Tool Chips
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -572,10 +920,7 @@ fun FloatingAssistantView(
                             ) {
                                 quickSuggestions.forEachIndexed { index, suggestion ->
                                     AssistChip(
-                                        onClick = {
-                                            promptText = suggestion
-                                            onSubmitPrompt(suggestion, selectedBot)
-                                        },
+                                        onClick = { dispatchPrompt(suggestion) },
                                         label = {
                                             Text(
                                                 text = suggestion,
@@ -585,113 +930,245 @@ fun FloatingAssistantView(
                                         },
                                         shape = RoundedCornerShape(999.dp),
                                         colors = AssistChipDefaults.assistChipColors(
-                                            containerColor = Color(0xFFF1F5F9)
+                                            containerColor = tokens.surfaceElevated
                                         ),
-                                        border = BorderStroke(1.dp, Color(0x1A0B0D1D)),
+                                        border = BorderStroke(1.dp, tokens.border),
                                         modifier = Modifier.testTag("floating_suggestion_chip_$index")
                                     )
                                 }
                             }
 
-                            // Prompt Input Row
+                            // Prompt Input Row with Speech-to-Text Mic & Stop/Send Button
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 OutlinedTextField(
                                     value = promptText,
                                     onValueChange = { promptText = it },
                                     placeholder = {
                                         Text(
-                                            text = "Ask ${selectedBot.name} for controls...",
-                                            fontSize = 13.sp,
-                                            color = Color(0xFF64748B)
+                                            text = if (useLiveStreamMode) "Ask ${selectedBot.name} (alarms, timer, calendar)..." else "Speak or ask ${selectedBot.name}...",
+                                            fontSize = 12.5.sp,
+                                            color = SlateMuted
                                         )
                                     },
                                     singleLine = true,
                                     shape = RoundedCornerShape(12.dp),
                                     colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = MoteNavy,
-                                        unfocusedBorderColor = Color(0x330F172A),
-                                        focusedContainerColor = Color.White,
-                                        unfocusedContainerColor = IosCanvas
+                                        focusedBorderColor = tokens.accentBlue,
+                                        unfocusedBorderColor = tokens.border,
+                                        focusedContainerColor = tokens.surface,
+                                        unfocusedContainerColor = tokens.surfaceSubtle,
+                                        focusedTextColor = MoteNavy,
+                                        unfocusedTextColor = MoteNavy
                                     ),
                                     modifier = Modifier
                                         .weight(1f)
                                         .testTag("floating_prompt_input")
                                 )
 
-                                FilledIconButton(
-                                    onClick = {
-                                        val trimmed = promptText.trim()
-                                        if (trimmed.isNotEmpty()) {
-                                            onSubmitPrompt(trimmed, selectedBot)
-                                        }
-                                    },
-                                    enabled = promptText.isNotBlank() && aiState !is AiCardUiState.Loading,
-                                    colors = IconButtonDefaults.filledIconButtonColors(
-                                        containerColor = LocalNanoEmerald,
-                                        contentColor = Color.White,
-                                        disabledContainerColor = Color(0xFFE2E8F0),
-                                        disabledContentColor = Color(0xFF94A3B8)
+                                FilledTonalIconButton(
+                                    onClick = { requestVoiceInput() },
+                                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                        containerColor = if (speechState.isListening) tokens.errorBg else tokens.accentBlueBg,
+                                        contentColor = if (speechState.isListening) tokens.errorTitle else tokens.accentBlue
                                     ),
                                     modifier = Modifier
                                         .size(48.dp)
-                                        .testTag("floating_send_button")
+                                        .scale(if (speechState.isListening) 1f + speechState.rmsLevel * 0.12f else 1f)
+                                        .testTag("floating_mic_button")
                                 ) {
                                     Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.Send,
-                                        contentDescription = stringResource(R.string.floating_send_desc),
+                                        imageVector = if (speechState.isListening) Icons.Outlined.MicOff else Icons.Outlined.Mic,
+                                        contentDescription = if (speechState.isListening) "Stop listening" else "Voice input",
                                         modifier = Modifier.size(20.dp)
+                                    )
+                                }
+
+                                if (isStreaming) {
+                                    FilledIconButton(
+                                        onClick = onStopStreaming,
+                                        colors = IconButtonDefaults.filledIconButtonColors(
+                                            containerColor = Color(0xFFDC2626),
+                                            contentColor = Color.White
+                                        ),
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .testTag("floating_stop_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Stop,
+                                            contentDescription = "Stop streaming",
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                } else {
+                                    FilledIconButton(
+                                        onClick = {
+                                            if (speechState.isListening) speechController.stopListening()
+                                            dispatchPrompt(promptText)
+                                        },
+                                        enabled = promptText.isNotBlank() && aiState !is AiCardUiState.Loading,
+                                        colors = IconButtonDefaults.filledIconButtonColors(
+                                            containerColor = LocalNanoEmerald,
+                                            contentColor = Color.White,
+                                            disabledContainerColor = tokens.divider,
+                                            disabledContentColor = SlateMuted
+                                        ),
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .testTag("floating_send_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.Send,
+                                            contentDescription = stringResource(R.string.floating_send_desc),
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (speechState.isListening) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(tokens.errorBg)
+                                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                                        .testTag("floating_voice_listening_banner"),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0xFFDC2626))
+                                    )
+                                    Text(
+                                        text = "Listening via Google Speech Recognition...",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = tokens.errorTitle,
+                                        modifier = Modifier.weight(1f)
                                     )
                                 }
                             }
 
-                            // AI Output Area (Idle / Shimmer Loading / GenUI Card / Error)
-                            when (aiState) {
-                                is AiCardUiState.Idle -> {
-                                    Row(
+                            speechState.errorText?.let { status ->
+                                Text(
+                                    text = status,
+                                    fontSize = 11.5.sp,
+                                    color = tokens.errorTitle,
+                                    modifier = Modifier.testTag("floating_voice_status")
+                                )
+                            }
+
+                            // Real-time Streaming Response + Live Tool Widgets inside Floating Overlay
+                            when (chatStreamState) {
+                                is ChatStreamUiState.Streaming -> {
+                                    Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(12.dp))
-                                            .background(IosCanvas)
-                                            .padding(12.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                            .background(tokens.accentBlueBg)
+                                            .border(1.dp, tokens.accentBlue.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                                            .padding(10.dp)
+                                            .testTag("floating_live_stream_card"),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Outlined.DragHandle,
-                                            contentDescription = null,
-                                            tint = CloudFlashCobalt,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                        Text(
-                                            text = "Tap a quick chip or type a request to render native Android controls inline.",
-                                            fontSize = 12.sp,
-                                            color = Color(0xFF475569)
-                                        )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(13.dp),
+                                                    strokeWidth = 2.dp,
+                                                    color = tokens.accentBlue
+                                                )
+                                                Text(
+                                                    text = chatStreamState.pendingToolHint ?: "${chatStreamState.botName} streaming...",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = tokens.accentBlue
+                                                )
+                                            }
+                                            Text(
+                                                text = String.format("%.1fs", chatStreamState.elapsedMs / 1000.0),
+                                                fontSize = 10.sp,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = SlateMuted
+                                            )
+                                        }
+                                        if (chatStreamState.partialText.isNotBlank()) {
+                                            Text(
+                                                text = chatStreamState.partialText,
+                                                fontSize = 12.5.sp,
+                                                color = MoteNavy,
+                                                lineHeight = 17.sp
+                                            )
+                                        }
+                                        chatStreamState.liveParts.forEach { part ->
+                                            InChatUiPartRenderer(
+                                                part = part,
+                                                alarms = clockAlarms,
+                                                timers = clockTimers,
+                                                stopwatch = clockStopwatch,
+                                                calendarEvents = calendarEvents,
+                                                capturedScreenshots = capturedScreenshots,
+                                                onToggleAlarm = onToggleAlarm,
+                                                onShiftAlarmMinutes = onShiftAlarmMinutes,
+                                                onDeleteAlarm = onDeleteAlarm,
+                                                onSyncAlarmToSystem = onSyncAlarmToSystem,
+                                                onControlTimer = onControlTimer,
+                                                onAddTimerSeconds = onAddTimerSeconds,
+                                                onControlStopwatch = onControlStopwatch,
+                                                onDeleteCalendarEvent = onDeleteCalendarEvent,
+                                                onSyncCalendarEventToSystem = onSyncCalendarEventToSystem,
+                                                onExecuteGenUiAction = onExecuteAction,
+                                                onAnalyzeScreenshot = onAnalyzeScreenshot
+                                            )
+                                        }
                                     }
                                 }
-
-                                is AiCardUiState.Loading -> {
-                                    FloatingShimmerLoadingCard()
+                                is ChatStreamUiState.Error -> {
+                                    Text(
+                                        text = chatStreamState.message,
+                                        fontSize = 11.5.sp,
+                                        color = tokens.errorTitle,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(tokens.errorBg)
+                                            .padding(10.dp)
+                                    )
                                 }
+                                else -> Unit
+                            }
 
+                            // Control Card Output Area (when Control Card mode is triggered or active)
+                            when (aiState) {
+                                is AiCardUiState.Loading -> FloatingShimmerLoadingCard(modelName = activeModelLabel)
                                 is AiCardUiState.Success -> {
                                     GenUiCardRenderer(
                                         result = aiState.result,
                                         onExecuteAction = onExecuteAction
                                     )
                                 }
-
                                 is AiCardUiState.Error -> {
                                     Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(12.dp))
-                                            .background(Color(0xFFFEF2F2))
-                                            .border(1.dp, Color(0xFFFECACA), RoundedCornerShape(12.dp))
+                                            .background(tokens.errorBg)
+                                            .border(1.dp, tokens.errorBorder, RoundedCornerShape(12.dp))
                                             .padding(12.dp),
                                         verticalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
@@ -699,12 +1176,12 @@ fun FloatingAssistantView(
                                             text = "Couldn't generate controls",
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 13.sp,
-                                            color = Color(0xFFB91C1C)
+                                            color = tokens.errorTitle
                                         )
                                         Text(
                                             text = aiState.message,
                                             fontSize = 12.sp,
-                                            color = Color(0xFF7F1D1D)
+                                            color = tokens.errorBody
                                         )
                                         OutlinedButton(
                                             onClick = {
@@ -727,15 +1204,55 @@ fun FloatingAssistantView(
                                         }
                                     }
                                 }
+                                is AiCardUiState.Idle -> {
+                                    if (!isStreaming && ((chatHistoryState as? ChatHistoryUiState.Success)?.messages.isNullOrEmpty())) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(tokens.surfaceSubtle)
+                                                .padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Outlined.AutoAwesome,
+                                                contentDescription = null,
+                                                tint = tokens.accentBlue,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                            Text(
+                                                text = "Tap any chip or speak to run live Cloud Gemini / Local AI with real Alarm, Timer, Stopwatch, Calendar & GenUI widgets.",
+                                                fontSize = 12.sp,
+                                                color = SlateMuted
+                                            )
+                                        }
+                                    }
+                                }
                             }
 
-                            // Conversation History Section (Firestore-synced or Local Guest)
+                            // Live Conversation History + Inline Tool Widgets
                             FloatingChatHistorySection(
                                 state = chatHistoryState,
                                 isCloudSynced = isCloudSynced,
-                                onReplayPrompt = { pastPrompt ->
-                                    promptText = pastPrompt
-                                },
+                                inChatUiPartsByText = inChatUiPartsByText,
+                                clockAlarms = clockAlarms,
+                                clockTimers = clockTimers,
+                                clockStopwatch = clockStopwatch,
+                                calendarEvents = calendarEvents,
+                                capturedScreenshots = capturedScreenshots,
+                                onToggleAlarm = onToggleAlarm,
+                                onShiftAlarmMinutes = onShiftAlarmMinutes,
+                                onDeleteAlarm = onDeleteAlarm,
+                                onSyncAlarmToSystem = onSyncAlarmToSystem,
+                                onControlTimer = onControlTimer,
+                                onAddTimerSeconds = onAddTimerSeconds,
+                                onControlStopwatch = onControlStopwatch,
+                                onDeleteCalendarEvent = onDeleteCalendarEvent,
+                                onSyncCalendarEventToSystem = onSyncCalendarEventToSystem,
+                                onExecuteGenUiAction = onExecuteAction,
+                                onAnalyzeScreenshot = onAnalyzeScreenshot,
+                                onReplayPrompt = { pastPrompt -> promptText = pastPrompt },
                                 onClearHistory = onClearHistory
                             )
                         }
@@ -744,23 +1261,95 @@ fun FloatingAssistantView(
             }
         }
     }
+
+    if (showModelSwitcher) {
+        ChatModelSwitcherBottomSheet(
+            llmConfig = llmConfig,
+            localModels = localModels,
+            loadedLocalModel = loadedLocalModel,
+            loadingLocalModelId = loadingLocalModelId,
+            preferLoadedLocalChat = preferLoadedLocalChat,
+            onSelectCloudModel = onSelectCloudModel,
+            onSelectLocalModel = onSelectLocalModel,
+            onOpenModelHub = {
+                showModelSwitcher = false
+                isExpanded = false
+                onOpenModelHub()
+            },
+            onDismiss = { showModelSwitcher = false }
+        )
+    }
+}
+
+@Composable
+private fun FloatingMiniBotOrb(
+    bot: BotPersona,
+    onTap: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val botColor = Color(bot.colorHex)
+    val initials = bot.name.trim().take(2).uppercase()
+    Box(
+        modifier = modifier
+            .size(44.dp)
+            .shadow(8.dp, CircleShape, ambientColor = botColor, spotColor = Color(0x440B0D1D))
+            .clip(CircleShape)
+            .background(MoteBrandNavy.copy(alpha = 0.94f))
+            .border(1.5.dp, botColor, CircleShape)
+            .clickable(onClick = onTap),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = initials,
+            color = Color.White,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(5.dp)
+                .size(7.dp)
+                .clip(CircleShape)
+                .background(botColor)
+                .border(1.dp, MoteBrandNavy, CircleShape)
+        )
+    }
 }
 
 @Composable
 private fun FloatingChatHistorySection(
     state: ChatHistoryUiState,
     isCloudSynced: Boolean,
+    inChatUiPartsByText: Map<String, List<InChatUiPart>>,
+    clockAlarms: List<ClockAlarmEntity>,
+    clockTimers: List<CountdownTimerItem>,
+    clockStopwatch: StopwatchUiState,
+    calendarEvents: List<CalendarEventEntity>,
+    capturedScreenshots: Map<String, Bitmap>,
+    onToggleAlarm: (String, Boolean) -> Unit,
+    onShiftAlarmMinutes: (String, Int) -> Unit,
+    onDeleteAlarm: (String) -> Unit,
+    onSyncAlarmToSystem: (ClockAlarmEntity) -> Unit,
+    onControlTimer: (String, String) -> Unit,
+    onAddTimerSeconds: (String, Int) -> Unit,
+    onControlStopwatch: (String) -> Unit,
+    onDeleteCalendarEvent: (String) -> Unit,
+    onSyncCalendarEventToSystem: (CalendarEventEntity) -> Unit,
+    onExecuteGenUiAction: (MoteAction) -> Unit,
+    onAnalyzeScreenshot: (String, String) -> Unit,
     onReplayPrompt: (String) -> Unit,
     onClearHistory: () -> Unit
 ) {
+    val tokens = LocalMoteColors.current
     val messages = (state as? ChatHistoryUiState.Success)?.messages.orEmpty()
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFFF8FAFC))
-            .border(1.dp, Color(0x140F172A), RoundedCornerShape(12.dp))
+            .background(tokens.surfaceSubtle)
+            .border(1.dp, tokens.border, RoundedCornerShape(12.dp))
             .padding(10.dp)
             .testTag("floating_chat_history_section"),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -781,7 +1370,7 @@ private fun FloatingChatHistorySection(
                     modifier = Modifier.size(15.dp)
                 )
                 Text(
-                    text = "CHAT HISTORY",
+                    text = "LIVE CHAT & TOOLS",
                     fontSize = 10.5.sp,
                     fontWeight = FontWeight.Bold,
                     color = MoteNavy
@@ -789,14 +1378,14 @@ private fun FloatingChatHistorySection(
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(999.dp))
-                        .background(if (isCloudSynced) Color(0xFFECFDF5) else Color(0xFFEFF6FF))
+                        .background(if (isCloudSynced) tokens.accentEmeraldBg else tokens.accentBlueBg)
                         .padding(horizontal = 7.dp, vertical = 2.dp)
                 ) {
                     Text(
                         text = if (isCloudSynced) "Firestore" else "Local Guest",
                         fontSize = 9.5.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = if (isCloudSynced) LocalNanoEmerald else CloudFlashCobalt
+                        color = if (isCloudSynced) tokens.accentEmerald else tokens.accentBlue
                     )
                 }
             }
@@ -811,7 +1400,7 @@ private fun FloatingChatHistorySection(
                     Icon(
                         imageVector = Icons.Outlined.DeleteOutline,
                         contentDescription = "Clear chat history",
-                        tint = Color(0xFF64748B),
+                        tint = SlateMuted,
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -821,7 +1410,9 @@ private fun FloatingChatHistorySection(
         when (state) {
             is ChatHistoryUiState.Loading -> {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -845,20 +1436,44 @@ private fun FloatingChatHistorySection(
             is ChatHistoryUiState.Success -> {
                 if (messages.isEmpty()) {
                     Text(
-                        text = "No conversation history yet. Send a prompt or tap a suggestion chip to start.",
+                        text = "No messages yet. Tap a tool chip or ask anything above.",
                         fontSize = 11.5.sp,
                         color = Color(0xFF64748B)
                     )
                 } else {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        messages.takeLast(8).forEach { msg ->
+                        messages.takeLast(6).forEach { msg ->
                             FloatingChatBubble(
                                 message = msg,
                                 onReplayPrompt = onReplayPrompt
                             )
+                            if (msg.chatRole() == ChatRole.ASSISTANT) {
+                                val parts = inChatUiPartsByText[msg.text.trim()].orEmpty()
+                                parts.forEach { part ->
+                                    InChatUiPartRenderer(
+                                        part = part,
+                                        alarms = clockAlarms,
+                                        timers = clockTimers,
+                                        stopwatch = clockStopwatch,
+                                        calendarEvents = calendarEvents,
+                                        capturedScreenshots = capturedScreenshots,
+                                        onToggleAlarm = onToggleAlarm,
+                                        onShiftAlarmMinutes = onShiftAlarmMinutes,
+                                        onDeleteAlarm = onDeleteAlarm,
+                                        onSyncAlarmToSystem = onSyncAlarmToSystem,
+                                        onControlTimer = onControlTimer,
+                                        onAddTimerSeconds = onAddTimerSeconds,
+                                        onControlStopwatch = onControlStopwatch,
+                                        onDeleteCalendarEvent = onDeleteCalendarEvent,
+                                        onSyncCalendarEventToSystem = onSyncCalendarEventToSystem,
+                                        onExecuteGenUiAction = onExecuteGenUiAction,
+                                        onAnalyzeScreenshot = onAnalyzeScreenshot
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -872,6 +1487,7 @@ private fun FloatingChatBubble(
     message: ChatMessage,
     onReplayPrompt: (String) -> Unit
 ) {
+    val tokens = LocalMoteColors.current
     val isUser = message.chatRole() == ChatRole.USER
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -879,7 +1495,7 @@ private fun FloatingChatBubble(
     ) {
         Column(
             modifier = Modifier
-                .widthIn(max = 260.dp)
+                .widthIn(max = 270.dp)
                 .clip(
                     RoundedCornerShape(
                         topStart = 12.dp,
@@ -888,10 +1504,10 @@ private fun FloatingChatBubble(
                         bottomEnd = if (isUser) 4.dp else 12.dp
                     )
                 )
-                .background(if (isUser) MoteNavy else Color.White)
+                .background(if (isUser) tokens.primaryActionBg else tokens.surface)
                 .border(
                     width = if (isUser) 0.dp else 1.dp,
-                    color = if (isUser) Color.Transparent else Color(0x1A0F172A),
+                    color = if (isUser) Color.Transparent else tokens.border,
                     shape = RoundedCornerShape(
                         topStart = 12.dp,
                         topEnd = 12.dp,
@@ -908,7 +1524,7 @@ private fun FloatingChatBubble(
                     text = message.botName,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
-                    color = CloudFlashCobalt
+                    color = tokens.accentBlue
                 )
                 Spacer(Modifier.height(2.dp))
             }
@@ -1004,7 +1620,7 @@ fun FloatingAssistantOrb(
                 .clip(CircleShape)
                 .background(
                     Brush.linearGradient(
-                        colors = listOf(MoteNavy, Color(0xFF1A2040))
+                        colors = listOf(MoteBrandNavy, Color(0xFF1A2040))
                     )
                 )
                 .border(
@@ -1028,14 +1644,14 @@ fun FloatingAssistantOrb(
                     .size(9.dp)
                     .clip(CircleShape)
                     .background(if (isBusy) CloudFlashCobalt else LocalNanoEmerald)
-                    .border(1.5.dp, MoteNavy, CircleShape)
+                    .border(1.5.dp, MoteBrandNavy, CircleShape)
             )
         }
     }
 }
 
 @Composable
-private fun FloatingShimmerLoadingCard() {
+private fun FloatingShimmerLoadingCard(modelName: String = "Gemini 3.8 Flash") {
     val shimmerTransition = rememberInfiniteTransition(label = "genUiShimmer")
     val shimmerAlpha by shimmerTransition.animateFloat(
         initialValue = 0.35f,
@@ -1047,11 +1663,12 @@ private fun FloatingShimmerLoadingCard() {
         label = "shimmerAlpha"
     )
 
+    val tokens = LocalMoteColors.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(IosCanvas)
+            .background(tokens.surfaceSubtle)
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -1061,14 +1678,14 @@ private fun FloatingShimmerLoadingCard() {
         ) {
             CircularProgressIndicator(
                 modifier = Modifier.size(14.dp),
-                color = CloudFlashCobalt,
+                color = tokens.accentBlue,
                 strokeWidth = 2.dp
             )
             Text(
-                text = "Generating controls with Gemini 3.8 Flash...",
+                text = "Generating controls with $modelName...",
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = CloudFlashCobalt
+                color = tokens.accentBlue
             )
         }
         Box(
@@ -1076,14 +1693,14 @@ private fun FloatingShimmerLoadingCard() {
                 .fillMaxWidth(0.75f)
                 .height(12.dp)
                 .clip(RoundedCornerShape(6.dp))
-                .background(Color(0xFFCBD5E1).copy(alpha = shimmerAlpha))
+                .background(tokens.divider.copy(alpha = shimmerAlpha))
         )
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(36.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xFFCBD5E1).copy(alpha = shimmerAlpha * 0.85f))
+                .background(tokens.divider.copy(alpha = shimmerAlpha * 0.85f))
         )
     }
 }

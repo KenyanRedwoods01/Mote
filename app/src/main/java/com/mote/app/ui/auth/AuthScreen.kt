@@ -36,6 +36,8 @@ import com.mote.app.ui.components.IosCanvas
 import com.mote.app.ui.components.LocalNanoEmerald
 import com.mote.app.ui.components.MoteCard
 import com.mote.app.ui.components.MoteNavy
+import com.mote.app.ui.components.SlateMuted
+import com.mote.app.ui.theme.LocalMoteColors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
@@ -176,7 +178,7 @@ fun GoogleSignInButton(
         },
         enabled = !isLoading,
         shape = RoundedCornerShape(10.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = MoteNavy),
+        colors = ButtonDefaults.buttonColors(containerColor = LocalMoteColors.current.primaryActionBg),
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
@@ -253,7 +255,7 @@ fun AuthScreen(
             Text(
                 text = "Floating Hybrid AI Bots & Native Generative UI",
                 fontSize = 14.sp,
-                color = Color(0xFF475569),
+                color = SlateMuted,
                 textAlign = TextAlign.Center
             )
 
@@ -268,7 +270,7 @@ fun AuthScreen(
                 Text(
                     text = "Sign in with Google to sync your bot personas across devices, or continue as a guest with local session controls and live Gemini AI.",
                     fontSize = 13.sp,
-                    color = Color(0xFF475569)
+                    color = SlateMuted
                 )
                 Spacer(Modifier.height(16.dp))
 

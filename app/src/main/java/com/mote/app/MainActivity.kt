@@ -1,15 +1,20 @@
 package com.mote.app
 
+import android.content.Intent
+import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,7 +22,6 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,26 +34,48 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
 import com.mote.app.ai.HybridAiRouter
 import com.mote.app.control.DeviceActionExecutor
+import com.mote.app.control.DeviceAutomationToolsManager
 import com.mote.app.data.BotRepository
 import com.mote.app.data.BotStore
 import com.mote.app.data.ChatHistoryStore
 import com.mote.app.data.FirestoreChatHistoryRepository
 import com.mote.app.data.GuestBotStore
 import com.mote.app.data.GuestChatHistoryStore
+import com.mote.app.data.LocalModelManager
 import com.mote.app.security.configureAppCheck
+import com.mote.app.service.MediaProjectionConsentBridge
 import com.mote.app.ui.BotsUiState
 import com.mote.app.ui.MoteViewModel
 import com.mote.app.ui.auth.AuthScreen
 import com.mote.app.ui.components.FloatingAssistantView
+import com.mote.app.ui.components.IosCanvas
 import com.mote.app.ui.components.IosFloatingBottomNav
 import com.mote.app.ui.components.moteFloatingTabs
 import com.mote.app.ui.screens.ChatHubScreen
+import com.mote.app.ui.screens.GenUiStudioScreen
 import com.mote.app.ui.screens.ModelsStudioScreen
 import com.mote.app.ui.screens.SecurityCenterScreen
 import com.mote.app.ui.screens.SettingsScreen
+import com.mote.app.ui.theme.MoteTheme
+import com.mote.app.ui.theme.ThemePreferenceStore
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+
+    private var pendingMediaProjectionCallback: ((Int, Intent?) -> Unit)? = null
+
+    private val mediaProjectionConsentLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val cb = pendingMediaProjectionCallback
+        pendingMediaProjectionCallback = null
+        cb?.invoke(result.resultCode, result.data)
+    }
+
+    private val mediaProjectionRequester: (Intent, (Int, Intent?) -> Unit) -> Unit = { intent, callback ->
+        pendingMediaProjectionCallback = callback
+        mediaProjectionConsentLauncher.launch(intent)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,13 +83,43 @@ class MainActivity : ComponentActivity() {
         // STEP 1: Configure App Check with launch intent before any UI, ViewModels, or Firebase operations
         configureAppCheck(this, intent)
 
+        ThemePreferenceStore.init(applicationContext)
         enableEdgeToEdge()
 
         setContent {
-            MaterialTheme {
+            val isDarkTheme by ThemePreferenceStore.isDarkTheme.collectAsStateWithLifecycle()
+
+            LaunchedEffect(isDarkTheme) {
+                enableEdgeToEdge(
+                    statusBarStyle = if (isDarkTheme) {
+                        SystemBarStyle.dark(AndroidColor.TRANSPARENT)
+                    } else {
+                        SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT)
+                    },
+                    navigationBarStyle = if (isDarkTheme) {
+                        SystemBarStyle.dark(AndroidColor.TRANSPARENT)
+                    } else {
+                        SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT)
+                    }
+                )
+            }
+
+            MoteTheme(darkTheme = isDarkTheme) {
                 MoteAppRoot()
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        DeviceAutomationToolsManager.attachForegroundActivity(this)
+        MediaProjectionConsentBridge.attachConsentLauncher(mediaProjectionRequester)
+    }
+
+    override fun onPause() {
+        DeviceAutomationToolsManager.detachForegroundActivity(this)
+        MediaProjectionConsentBridge.detachConsentLauncher(mediaProjectionRequester)
+        super.onPause()
     }
 }
 
@@ -131,15 +187,27 @@ private fun MoteHubHost(
     val chatStore: ChatHistoryStore = remember(context, isGuest) {
         if (isGuest) GuestChatHistoryStore() else FirestoreChatHistoryRepository(context)
     }
+    val localModelManager = remember(context) { LocalModelManager(context) }
     val router = remember { HybridAiRouter() }
     val executor = remember(context) { DeviceActionExecutor(context) }
     val vm: MoteViewModel = viewModel(
         key = sessionKey,
-        factory = MoteViewModel.Factory(store, chatStore, router)
+        factory = MoteViewModel.Factory(store, chatStore, router, localModelManager)
     )
 
     val botsState by vm.botsState.collectAsStateWithLifecycle()
     val chatHistoryState by vm.chatHistoryState.collectAsStateWithLifecycle()
+    val chatStreamState by vm.chatStreamState.collectAsStateWithLifecycle()
+    val inChatUiPartsByText by vm.inChatUiPartsByText.collectAsStateWithLifecycle()
+    val clockAlarms by vm.clockAlarms.collectAsStateWithLifecycle()
+    val clockTimers by vm.clockTimers.collectAsStateWithLifecycle()
+    val clockStopwatch by vm.clockStopwatch.collectAsStateWithLifecycle()
+    val calendarEvents by vm.calendarEvents.collectAsStateWithLifecycle()
+    val capturedScreenshots by vm.capturedScreenshots.collectAsStateWithLifecycle()
+    val localModels by vm.localModels.collectAsStateWithLifecycle()
+    val loadedLocalModel by vm.loadedLocalModel.collectAsStateWithLifecycle()
+    val loadingLocalModelId by vm.loadingLocalModelId.collectAsStateWithLifecycle()
+    val preferLoadedLocalChat by vm.preferLoadedLocalChat.collectAsStateWithLifecycle()
     val aiState by vm.aiState.collectAsStateWithLifecycle()
     val llmConfig by vm.llmConfig.collectAsStateWithLifecycle()
     val activeBots = (botsState as? BotsUiState.Success)?.bots.orEmpty()
@@ -166,9 +234,32 @@ private fun MoteHubHost(
         }
     }
 
+    DisposableEffect(Unit) {
+        val navHandler: (String) -> Unit = { tabKey ->
+            val targetIdx = when (tabKey.lowercase()) {
+                "chat" -> 0
+                "genui", "studio" -> 1
+                "models", "model", "local" -> 2
+                "tools", "permissions", "security" -> 3
+                "settings", "config" -> 4
+                else -> -1
+            }
+            if (targetIdx >= 0) {
+                navigateToTab(targetIdx)
+            }
+        }
+        DeviceAutomationToolsManager.onNavigateInAppTab = navHandler
+        onDispose {
+            if (DeviceAutomationToolsManager.onNavigateInAppTab === navHandler) {
+                DeviceAutomationToolsManager.onNavigateInAppTab = null
+            }
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .background(IosCanvas)
             .statusBarsPadding()
     ) {
         HorizontalPager(
@@ -183,21 +274,26 @@ private fun MoteHubHost(
                     isImeVisible = isImeVisible,
                     floatingAssistantVisible = showFloatingAssistant,
                     onToggleFloatingAssistant = { showFloatingAssistant = !showFloatingAssistant },
-                    onOpenModelsTab = { navigateToTab(1) }
+                    onOpenModelsTab = { navigateToTab(2) },
+                    onOpenToolsTab = { navigateToTab(3) }
                 )
-                1 -> ModelsStudioScreen(
+                1 -> GenUiStudioScreen(viewModel = vm)
+                2 -> ModelsStudioScreen(
                     viewModel = vm,
                     isGuest = isGuest,
                     onSelectPersonaForChat = { botId ->
                         vm.selectBot(botId)
                         navigateToTab(0)
-                    }
+                    },
+                    onOpenChatTab = { navigateToTab(0) }
                 )
-                2 -> SecurityCenterScreen(
+                3 -> SecurityCenterScreen(
+                    viewModel = vm,
                     floatingAssistantVisible = showFloatingAssistant,
                     onToggleFloatingAssistant = { showFloatingAssistant = !showFloatingAssistant }
                 )
                 else -> SettingsScreen(
+                    viewModel = vm,
                     isGuest = isGuest,
                     userEmail = userEmail,
                     llmConfig = llmConfig,
@@ -208,7 +304,6 @@ private fun MoteHubHost(
             }
         }
 
-        // Smoothly hide floating bottom nav when keyboard is open in Chat
         AnimatedVisibility(
             visible = !isImeVisible,
             enter = fadeIn(animationSpec = spring(stiffness = 400f)) +
@@ -236,6 +331,42 @@ private fun MoteHubHost(
                 aiState = aiState,
                 chatHistoryState = chatHistoryState,
                 isCloudSynced = !isGuest,
+                chatStreamState = chatStreamState,
+                inChatUiPartsByText = inChatUiPartsByText,
+                clockAlarms = clockAlarms,
+                clockTimers = clockTimers,
+                clockStopwatch = clockStopwatch,
+                calendarEvents = calendarEvents,
+                capturedScreenshots = capturedScreenshots,
+                llmConfig = llmConfig,
+                localModels = localModels,
+                loadedLocalModel = loadedLocalModel,
+                loadingLocalModelId = loadingLocalModelId,
+                preferLoadedLocalChat = preferLoadedLocalChat,
+                onSendStreamingChat = { prompt, bot ->
+                    vm.sendStreamingChatMessage(
+                        prompt = prompt,
+                        bot = bot
+                    )
+                },
+                onStopStreaming = { vm.stopStreaming() },
+                onSelectCloudModel = { modelId ->
+                    vm.updateModel(modelId)
+                },
+                onSelectLocalModel = { modelId ->
+                    vm.selectDownloadedModelForChat(modelId)
+                },
+                onOpenModelHub = { navigateToTab(2) },
+                onToggleAlarm = { id, enabled -> vm.toggleClockAlarm(id, enabled) },
+                onShiftAlarmMinutes = { id, delta -> vm.shiftClockAlarmMinutes(id, delta) },
+                onDeleteAlarm = { id -> vm.deleteClockAlarm(id) },
+                onSyncAlarmToSystem = { alarm -> vm.syncClockAlarmToAndroid(alarm) },
+                onControlTimer = { action, timerId -> vm.controlClockTimer(action, timerId) },
+                onAddTimerSeconds = { timerId, extra -> vm.addSecondsToClockTimer(timerId, extra) },
+                onControlStopwatch = { action -> vm.controlClockStopwatch(action) },
+                onDeleteCalendarEvent = { id -> vm.deleteCalendarEvent(id) },
+                onSyncCalendarEventToSystem = { ev -> vm.syncCalendarEventToAndroid(ev) },
+                onAnalyzeScreenshot = { capId, prompt -> vm.analyzeCapturedScreenshot(capId, prompt) },
                 onSubmitPrompt = { prompt, bot ->
                     vm.generateFocusControlCard(
                         userPrompt = prompt,

@@ -91,7 +91,7 @@ fun LobeModelAvatar(
         LobeModelBrand.DEEPSEEK -> Brush.linearGradient(listOf(Color(0xFF1D4ED8), Color(0xFF4D6BFE)))
         LobeModelBrand.MISTRAL -> Brush.linearGradient(listOf(Color(0xFF18181B), Color(0xFF27272A)))
         LobeModelBrand.HUGGINGFACE -> Brush.linearGradient(listOf(Color(0xFFFFD21E), Color(0xFFFF9D00)))
-        LobeModelBrand.MOTE -> Brush.linearGradient(listOf(MoteNavy, Color(0xFF1E293B)))
+        LobeModelBrand.MOTE -> Brush.linearGradient(listOf(MoteBrandNavy, Color(0xFF1E293B)))
     }
 
     Box(

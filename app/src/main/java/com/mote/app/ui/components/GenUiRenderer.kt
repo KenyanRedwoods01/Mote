@@ -33,6 +33,7 @@ import com.mote.app.ai.EngineUsed
 import com.mote.app.ai.GenUiWidgetSpec
 import com.mote.app.ai.HybridGenUiResult
 import com.mote.app.ai.MoteAction
+import com.mote.app.ui.theme.LocalMoteColors
 import java.util.Locale
 
 private fun accentColorFor(name: String): Color = when (name.lowercase()) {
@@ -52,19 +53,20 @@ private fun accentColorFor(name: String): Color = when (name.lowercase()) {
 @Composable
 fun GenUiCardRenderer(
     result: HybridGenUiResult,
-    onExecuteAction: (MoteAction) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onExecuteAction: (MoteAction) -> Unit
 ) {
+    val tokens = LocalMoteColors.current
     val accent = accentColorFor(result.spec.themeAccent)
     val badgeBg = when (result.engineUsed) {
-        EngineUsed.LOCAL_NANO -> Color(0xFFECFDF5)
-        EngineUsed.CLOUD_FLASH -> Color(0xFFEFF6FF)
-        EngineUsed.OFFLINE_FALLBACK -> Color(0xFFF1F5F9)
+        EngineUsed.LOCAL_NANO -> if (tokens.isDark) Color(0xFF064E3B) else Color(0xFFECFDF5)
+        EngineUsed.CLOUD_FLASH -> if (tokens.isDark) Color(0xFF1E3A8A) else Color(0xFFEFF6FF)
+        EngineUsed.OFFLINE_FALLBACK -> MoteSurfaceSubtle
     }
     val badgeFg = when (result.engineUsed) {
-        EngineUsed.LOCAL_NANO -> Color(0xFF065F46)
-        EngineUsed.CLOUD_FLASH -> Color(0xFF1E3A8A)
-        EngineUsed.OFFLINE_FALLBACK -> Color(0xFF334155)
+        EngineUsed.LOCAL_NANO -> if (tokens.isDark) Color(0xFF6EE7B7) else Color(0xFF065F46)
+        EngineUsed.CLOUD_FLASH -> if (tokens.isDark) Color(0xFF93C5FD) else Color(0xFF1E3A8A)
+        EngineUsed.OFFLINE_FALLBACK -> SlateMuted
     }
     val badgeLabel = "${result.modelName} · ${result.latencyMs}ms"
 
@@ -119,18 +121,11 @@ fun GenUiCardRenderer(
 
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             result.spec.widgets.forEach { w ->
-                when (w.type) {
-                    "metric_grid" -> GenUiMetricGrid(w, accent)
-                    "bar_chart" -> GenUiBarChart(w, accent)
-                    "checklist" -> GenUiInteractiveChecklist(w, accent)
-                    "comparison_table" -> GenUiComparisonTable(w, accent)
-                    "timeline" -> GenUiTimeline(w, accent)
-                    "quiz_card" -> GenUiInteractiveQuiz(w, accent)
-                    "slider" -> GenUiSlider(w, accent, onExecuteAction)
-                    "toggle" -> GenUiToggle(w, onExecuteAction)
-                    "action_chip", "confirm_button" -> GenUiActionButton(w, accent, onExecuteAction)
-                    "reply_pills" -> GenUiReplyPills(w, onExecuteAction)
-                    "info_card" -> GenUiInfoCard(w, accent, onExecuteAction)
+                val descriptor = GenUiComponentRegistry.resolve(w.type)
+                if (descriptor != null) {
+                    descriptor.renderer(w, accent, onExecuteAction)
+                } else {
+                    GenUiInfoCard(w, accent, onExecuteAction)
                 }
             }
         }
@@ -138,7 +133,7 @@ fun GenUiCardRenderer(
 }
 
 @Composable
-private fun GenUiMetricGrid(w: GenUiWidgetSpec, accent: Color) {
+internal fun GenUiMetricGrid(w: GenUiWidgetSpec, accent: Color) {
     if (w.metrics.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (w.label.isNotBlank()) {
@@ -154,8 +149,8 @@ private fun GenUiMetricGrid(w: GenUiWidgetSpec, accent: Color) {
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFFF8FAFC))
-                            .border(1.dp, Color(0x140F172A), RoundedCornerShape(12.dp))
+                            .background(MoteSurfaceSubtle)
+                            .border(1.dp, MoteBorder, RoundedCornerShape(12.dp))
                             .padding(10.dp)
                     ) {
                         Text(metric.label, fontSize = 11.sp, color = SlateMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -176,15 +171,15 @@ private fun GenUiMetricGrid(w: GenUiWidgetSpec, accent: Color) {
 }
 
 @Composable
-private fun GenUiBarChart(w: GenUiWidgetSpec, accent: Color) {
+internal fun GenUiBarChart(w: GenUiWidgetSpec, accent: Color) {
     if (w.chartBars.isEmpty()) return
     val maxVal = (w.chartBars.maxOfOrNull { it.value } ?: 1f).coerceAtLeast(1f)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFFF8FAFC))
-            .border(1.dp, Color(0x140F172A), RoundedCornerShape(12.dp))
+            .background(MoteSurfaceSubtle)
+            .border(1.dp, MoteBorder, RoundedCornerShape(12.dp))
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -226,7 +221,7 @@ private fun GenUiBarChart(w: GenUiWidgetSpec, accent: Color) {
 }
 
 @Composable
-private fun GenUiInteractiveChecklist(w: GenUiWidgetSpec, accent: Color) {
+internal fun GenUiInteractiveChecklist(w: GenUiWidgetSpec, accent: Color) {
     if (w.options.isEmpty()) return
     val checkedIndices = remember(w.id) { mutableStateMapOf<Int, Boolean>() }
     val doneCount = checkedIndices.values.count { it }
@@ -236,8 +231,8 @@ private fun GenUiInteractiveChecklist(w: GenUiWidgetSpec, accent: Color) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFFF8FAFC))
-            .border(1.dp, Color(0x140F172A), RoundedCornerShape(12.dp))
+            .background(MoteSurfaceSubtle)
+            .border(1.dp, MoteBorder, RoundedCornerShape(12.dp))
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -289,7 +284,7 @@ private fun GenUiInteractiveChecklist(w: GenUiWidgetSpec, accent: Color) {
 }
 
 @Composable
-private fun GenUiComparisonTable(w: GenUiWidgetSpec, accent: Color) {
+internal fun GenUiComparisonTable(w: GenUiWidgetSpec, accent: Color) {
     if (w.comparisonRows.isEmpty()) return
     val leftHeader = w.comparisonHeaders.getOrNull(0) ?: "Option A"
     val rightHeader = w.comparisonHeaders.getOrNull(1) ?: "Option B"
@@ -297,8 +292,8 @@ private fun GenUiComparisonTable(w: GenUiWidgetSpec, accent: Color) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFFF8FAFC))
-            .border(1.dp, Color(0x140F172A), RoundedCornerShape(12.dp))
+            .background(MoteSurfaceSubtle)
+            .border(1.dp, MoteBorder, RoundedCornerShape(12.dp))
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -307,7 +302,7 @@ private fun GenUiComparisonTable(w: GenUiWidgetSpec, accent: Color) {
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp))
-                .background(MoteNavy)
+                .background(MoteBrandNavy)
                 .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             Text("Feature", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8), modifier = Modifier.weight(1f))
@@ -322,23 +317,23 @@ private fun GenUiComparisonTable(w: GenUiWidgetSpec, accent: Color) {
                 verticalAlignment = Alignment.Top
             ) {
                 Text(row.feature, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MoteNavy, modifier = Modifier.weight(1f).padding(end = 4.dp))
-                Text(row.leftValue, fontSize = 11.5.sp, color = Color(0xFF334155), modifier = Modifier.weight(1f).padding(end = 4.dp))
+                Text(row.leftValue, fontSize = 11.5.sp, color = SlateMuted, modifier = Modifier.weight(1f).padding(end = 4.dp))
                 Text(row.rightValue, fontSize = 11.5.sp, color = accent, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
             }
-            HorizontalDivider(color = Color(0x100F172A))
+            HorizontalDivider(color = MoteBorder)
         }
     }
 }
 
 @Composable
-private fun GenUiTimeline(w: GenUiWidgetSpec, accent: Color) {
+internal fun GenUiTimeline(w: GenUiWidgetSpec, accent: Color) {
     if (w.timelineSteps.isEmpty()) return
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFFF8FAFC))
-            .border(1.dp, Color(0x140F172A), RoundedCornerShape(12.dp))
+            .background(MoteSurfaceSubtle)
+            .border(1.dp, MoteBorder, RoundedCornerShape(12.dp))
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -383,17 +378,18 @@ private fun GenUiTimeline(w: GenUiWidgetSpec, accent: Color) {
 }
 
 @Composable
-private fun GenUiInteractiveQuiz(w: GenUiWidgetSpec, accent: Color) {
+internal fun GenUiInteractiveQuiz(w: GenUiWidgetSpec, accent: Color) {
     if (w.options.isEmpty()) return
     var selectedIdx by remember(w.id) { mutableStateOf<Int?>(null) }
     val correctIdx = (w.correctOptionIndex ?: 0).coerceIn(0, w.options.lastIndex)
 
+    val tokens = LocalMoteColors.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFFF8FAFC))
-            .border(1.dp, Color(0x140F172A), RoundedCornerShape(12.dp))
+            .background(MoteSurfaceSubtle)
+            .border(1.dp, MoteBorder, RoundedCornerShape(12.dp))
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -404,16 +400,16 @@ private fun GenUiInteractiveQuiz(w: GenUiWidgetSpec, accent: Color) {
             val isPicked = selectedIdx == idx
             val isCorrect = idx == correctIdx
             val bg = when {
-                selectedIdx == null -> Color.White
-                isCorrect -> Color(0xFFECFDF5)
-                isPicked -> Color(0xFFFEF2F2)
-                else -> Color.White
+                selectedIdx == null -> MoteSurface
+                isCorrect -> if (tokens.isDark) Color(0xFF064E3B) else Color(0xFFECFDF5)
+                isPicked -> if (tokens.isDark) Color(0xFF3B1519) else Color(0xFFFEF2F2)
+                else -> MoteSurface
             }
             val borderColor = when {
-                selectedIdx == null -> Color(0x1A0F172A)
+                selectedIdx == null -> MoteBorder
                 isCorrect -> LocalNanoEmerald
                 isPicked -> Color(0xFFDC2626)
-                else -> Color(0x120F172A)
+                else -> MoteBorder
             }
             Row(
                 modifier = Modifier
@@ -443,12 +439,12 @@ private fun GenUiInteractiveQuiz(w: GenUiWidgetSpec, accent: Color) {
             Text(
                 text = w.explanation,
                 fontSize = 12.sp,
-                color = Color(0xFF334155),
+                color = MoteNavy,
                 lineHeight = 17.sp,
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFFEFF6FF))
+                    .background(if (tokens.isDark) Color(0xFF172554) else Color(0xFFEFF6FF))
                     .padding(9.dp)
             )
         }
@@ -456,7 +452,7 @@ private fun GenUiInteractiveQuiz(w: GenUiWidgetSpec, accent: Color) {
 }
 
 @Composable
-private fun GenUiSlider(w: GenUiWidgetSpec, accent: Color, onExecuteAction: (MoteAction) -> Unit) {
+internal fun GenUiSlider(w: GenUiWidgetSpec, accent: Color, onExecuteAction: (MoteAction) -> Unit) {
     var sliderVal by remember(w.id) { mutableFloatStateOf((w.intValue ?: 50).coerceIn(10, 100).toFloat()) }
     Column {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -479,7 +475,7 @@ private fun GenUiSlider(w: GenUiWidgetSpec, accent: Color, onExecuteAction: (Mot
 }
 
 @Composable
-private fun GenUiToggle(w: GenUiWidgetSpec, onExecuteAction: (MoteAction) -> Unit) {
+internal fun GenUiToggle(w: GenUiWidgetSpec, onExecuteAction: (MoteAction) -> Unit) {
     var checked by remember(w.id) { mutableStateOf(w.boolValue ?: false) }
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -501,7 +497,7 @@ private fun GenUiToggle(w: GenUiWidgetSpec, onExecuteAction: (MoteAction) -> Uni
 }
 
 @Composable
-private fun GenUiActionButton(w: GenUiWidgetSpec, accent: Color, onExecuteAction: (MoteAction) -> Unit) {
+internal fun GenUiActionButton(w: GenUiWidgetSpec, accent: Color, onExecuteAction: (MoteAction) -> Unit) {
     Button(
         onClick = {
             when (w.actionType) {
@@ -514,7 +510,7 @@ private fun GenUiActionButton(w: GenUiWidgetSpec, accent: Color, onExecuteAction
             }
         },
         shape = RoundedCornerShape(10.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = if (w.requiresConfirm) accent else MoteNavy),
+        colors = ButtonDefaults.buttonColors(containerColor = if (w.requiresConfirm) accent else LocalMoteColors.current.primaryActionBg),
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
@@ -525,7 +521,7 @@ private fun GenUiActionButton(w: GenUiWidgetSpec, accent: Color, onExecuteAction
 }
 
 @Composable
-private fun GenUiReplyPills(w: GenUiWidgetSpec, onExecuteAction: (MoteAction) -> Unit) {
+internal fun GenUiReplyPills(w: GenUiWidgetSpec, onExecuteAction: (MoteAction) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (w.label.isNotBlank()) {
             Text(w.label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = SlateMuted)
@@ -546,7 +542,7 @@ private fun GenUiReplyPills(w: GenUiWidgetSpec, onExecuteAction: (MoteAction) ->
 }
 
 @Composable
-private fun GenUiInfoCard(w: GenUiWidgetSpec, accent: Color, onExecuteAction: (MoteAction) -> Unit) {
+internal fun GenUiInfoCard(w: GenUiWidgetSpec, accent: Color, onExecuteAction: (MoteAction) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()

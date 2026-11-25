@@ -13,10 +13,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.DashboardCustomize
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.DashboardCustomize
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shield
@@ -41,32 +43,68 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mote.app.ui.theme.LocalMoteColors
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-val MoteNavy = Color(0xFF0B0D1D)
-val IosCanvas = Color(0xFFF2F2F7)
+/** Fixed dark brand navy used exclusively for dark banners, orbs, and user pills with white text. */
+val MoteBrandNavy = Color(0xFF0B0D1D)
+
+/** Theme-adaptive primary ink/foreground color (dark navy in Light mode, bright slate in Dark mode). */
+val MoteNavy: Color
+    @Composable get() = LocalMoteColors.current.onSurface
+
+/** Theme-adaptive screen canvas background. */
+val IosCanvas: Color
+    @Composable get() = LocalMoteColors.current.canvas
+
+/** Theme-adaptive card surface color. */
+val MoteSurface: Color
+    @Composable get() = LocalMoteColors.current.surface
+
+/** Theme-adaptive subtle secondary surface color. */
+val MoteSurfaceSubtle: Color
+    @Composable get() = LocalMoteColors.current.surfaceSubtle
+
+/** Theme-adaptive border hair-line color. */
+val MoteBorder: Color
+    @Composable get() = LocalMoteColors.current.border
+
 val LocalNanoEmerald = Color(0xFF059669)
 val CloudFlashCobalt = Color(0xFF1D4ED8)
 val IosGreen = Color(0xFF34C759)
-val SlateMuted = Color(0xFF64748B)
+
+/** Theme-adaptive muted secondary ink/icon color. */
+val SlateMuted: Color
+    @Composable get() = LocalMoteColors.current.onSurfaceSecondary
 
 /**
  * Crisp grouped card matching Mote's clean LLM client design language.
+ * Automatically adapts Light-mode surfaces (`Color.White`, `0xFFF8FAFC`, `0xFFFEF2F2`) when Dark theme is active.
  */
 @Composable
 fun MoteCard(
     modifier: Modifier = Modifier,
-    background: Color = Color.White,
+    background: Color = Color.Unspecified,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val tokens = LocalMoteColors.current
+    val resolvedBg = when {
+        background == Color.Unspecified -> tokens.surface
+        tokens.isDark && background == Color.White -> tokens.surface
+        tokens.isDark && background == Color(0xFFF8FAFC) -> tokens.surfaceSubtle
+        tokens.isDark && background == Color(0xFFFEF2F2) -> tokens.errorBg
+        tokens.isDark && background == Color(0xFFEFF6FF) -> tokens.accentBlueBg
+        tokens.isDark && background == Color(0xFFECFDF5) -> tokens.accentEmeraldBg
+        else -> background
+    }
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .shadow(2.dp, RoundedCornerShape(14.dp), ambientColor = Color(0x120B0D1D))
+            .shadow(if (tokens.isDark) 4.dp else 2.dp, RoundedCornerShape(14.dp), ambientColor = Color(0x1F000000))
             .clip(RoundedCornerShape(14.dp))
-            .background(background)
-            .border(0.5.dp, Color(0x140F172A), RoundedCornerShape(14.dp))
+            .background(resolvedBg)
+            .border(0.75.dp, tokens.border, RoundedCornerShape(14.dp))
             .padding(14.dp),
         content = content
     )
@@ -81,8 +119,9 @@ fun IosSpringSwitch(
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val tokens = LocalMoteColors.current
     val trackColor by animateColorAsState(
-        targetValue = if (checked) IosGreen else Color(0xFFD1D5DB),
+        targetValue = if (checked) IosGreen else tokens.switchOffTrack,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "switchTrack"
     )
@@ -132,10 +171,11 @@ fun IosTopNavBar(
     subtitle: String? = null,
     trailing: @Composable () -> Unit = {}
 ) {
+    val tokens = LocalMoteColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(IosCanvas.copy(alpha = 0.94f))
+            .background(tokens.canvas.copy(alpha = 0.96f))
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -145,7 +185,7 @@ fun IosTopNavBar(
                 text = title,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
-                color = MoteNavy,
+                color = tokens.onSurface,
                 letterSpacing = (-0.3).sp
             )
             if (!subtitle.isNullOrBlank()) {
@@ -153,7 +193,7 @@ fun IosTopNavBar(
                     text = subtitle,
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.Medium,
-                    color = SlateMuted
+                    color = tokens.onSurfaceSecondary
                 )
             }
         }
@@ -170,8 +210,9 @@ data class FloatingTab(
 
 val moteFloatingTabs = listOf(
     FloatingTab("chat", "Chat", Icons.Outlined.AutoAwesome, Icons.Rounded.AutoAwesome),
+    FloatingTab("genui", "GenUI", Icons.Outlined.DashboardCustomize, Icons.Rounded.DashboardCustomize),
     FloatingTab("models", "Models", Icons.Outlined.Memory, Icons.Rounded.Memory),
-    FloatingTab("privacy", "Privacy", Icons.Outlined.Shield, Icons.Rounded.Shield),
+    FloatingTab("tools", "Tools", Icons.Outlined.Shield, Icons.Rounded.Shield),
     FloatingTab("settings", "Settings", Icons.Outlined.Settings, Icons.Rounded.Settings)
 )
 
@@ -189,6 +230,7 @@ fun IosFloatingBottomNav(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val tokens = LocalMoteColors.current
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
     val clampedProgress = pagerProgress.coerceIn(0f, (moteFloatingTabs.size - 1).toFloat())
@@ -208,19 +250,19 @@ fun IosFloatingBottomNav(
                 .shadow(
                     elevation = 14.dp,
                     shape = CircleShape,
-                    ambientColor = Color(0x240B0D1D),
-                    spotColor = Color(0x280B0D1D)
+                    ambientColor = Color(0x33000000),
+                    spotColor = Color(0x40000000)
                 )
                 .clip(CircleShape)
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color(0xF5FFFFFF),
-                            Color(0xECF1F5F9)
+                            tokens.navGlassTop,
+                            tokens.navGlassBottom
                         )
                     )
                 )
-                .border(1.dp, Color(0x1C0F172A), CircleShape)
+                .border(1.dp, tokens.border, CircleShape)
                 .padding(5.dp)
                 .testTag("floating_bottom_nav")
         ) {
@@ -241,18 +283,18 @@ fun IosFloatingBottomNav(
                     .shadow(
                         elevation = 4.dp,
                         shape = CircleShape,
-                        ambientColor = Color(0x1E0B0D1D),
-                        spotColor = Color(0x240B0D1D)
+                        ambientColor = Color(0x24000000),
+                        spotColor = Color(0x2E000000)
                     )
                     .clip(CircleShape)
-                    .background(Color.White)
-                    .border(0.75.dp, Color(0x120F172A), CircleShape)
+                    .background(tokens.navPillBg)
+                    .border(0.75.dp, tokens.border, CircleShape)
             )
 
             Row(modifier = Modifier.fillMaxWidth()) {
                 moteFloatingTabs.forEachIndexed { idx, tab ->
                     val selectionFraction = (1f - abs(clampedProgress - idx)).coerceIn(0f, 1f)
-                    val contentColor = lerp(SlateMuted, MoteNavy, selectionFraction)
+                    val contentColor = lerp(tokens.onSurfaceSecondary, tokens.onSurface, selectionFraction)
                     val isDominant = selectionFraction >= 0.5f
 
                     Column(

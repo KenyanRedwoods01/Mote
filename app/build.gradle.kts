@@ -4,6 +4,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("com.google.devtools.ksp")
     id("com.google.gms.google-services")
 }
 
@@ -68,6 +69,18 @@ dependencies {
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-config")
+
+    // Google AI Edge LiteRT-LM (real on-device tiny LLM inference for .litertlm / .task models)
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.19.1")
+
+    // Room Local Storage (downloaded model metadata, verified file paths, and studio preferences)
+    val roomVersion = "2.7.2"
+    implementation("androidx.room:room-runtime:$roomVersion")
+    implementation("androidx.room:room-ktx:$roomVersion")
+    ksp("androidx.room:room-compiler:$roomVersion")
+
+    // WorkManager for reliable background model downloads with progress reporting
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
 
     // Jetpack Credential Manager + Google Sign-In
     implementation("androidx.credentials:credentials:1.5.0")

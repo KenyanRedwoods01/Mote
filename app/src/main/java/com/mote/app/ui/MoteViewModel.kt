@@ -6,21 +6,42 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.firestore.FirebaseFirestoreException
+import com.mote.app.ai.ChatGenUiToolProtocol
 import com.mote.app.ai.ChatStreamEvent
 import com.mote.app.ai.EngineUsed
+import com.mote.app.ai.GenUiToolRegistry
 import com.mote.app.ai.HybridAiRouter
 import com.mote.app.ai.HybridGenUiResult
+import com.mote.app.ai.InChatUiPart
 import com.mote.app.ai.InferenceMetrics
+import com.mote.app.ai.LiteRtDiagnosticLogEntry
+import com.mote.app.ai.LiteRtDiagnosticSummary
 import com.mote.app.ai.LlmConfig
+import com.mote.app.ai.LocalHardwareBackend
+import com.mote.app.ai.RegisteredToolDescriptor
+import com.mote.app.ai.StreamParserTelemetry
+import com.mote.app.ai.StreamParserTelemetrySnapshot
+import com.mote.app.ai.ToolExecutionAuditEntry
+import com.mote.app.ai.ToolUsageStatsSnapshot
+import com.mote.app.control.BatteryTelemetrySnapshot
+import com.mote.app.control.CountdownTimerItem
 import com.mote.app.control.LanServerUiState
 import com.mote.app.control.LocalLanApiServer
+import com.mote.app.control.StopwatchUiState
+import com.mote.app.control.ToolPermissionsSnapshot
+import com.mote.app.data.BenchmarkPromptPreset
 import com.mote.app.data.BotStore
 import com.mote.app.data.ChatHistoryStore
 import com.mote.app.data.DeviceHardwareSnapshot
+import com.mote.app.data.LiveBenchmarkProgress
 import com.mote.app.data.LoadedLocalModelState
 import com.mote.app.data.LocalModelDownloadStatus
 import com.mote.app.data.LocalModelEntry
 import com.mote.app.data.LocalModelManager
+import com.mote.app.data.db.CalendarEventEntity
+import com.mote.app.data.db.ClockAlarmEntity
+import com.mote.app.data.db.ModelBenchmarkEntity
+import com.mote.app.data.db.ModelStudioPrefsEntity
 import com.mote.app.model.BotPersona
 import com.mote.app.model.ChatMessage
 import com.mote.app.model.ChatRole
@@ -31,10 +52,11 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 sealed interface BotsUiState {
     data object Loading : BotsUiState
@@ -60,7 +82,9 @@ sealed interface ChatStreamUiState {
     data class Streaming(
         val partialText: String,
         val botName: String,
-        val elapsedMs: Long
+        val elapsedMs: Long,
+        val pendingToolHint: String? = null,
+        val liveParts: List<InChatUiPart> = emptyList()
     ) : ChatStreamUiState
     data class Error(val message: String) : ChatStreamUiState
 }
@@ -106,7 +130,61 @@ class MoteViewModel(
 
     val localModels: StateFlow<List<LocalModelEntry>> = localModelManager.models
     val loadedLocalModel: StateFlow<LoadedLocalModelState?> = localModelManager.loadedModel
+    val loadingLocalModelId: StateFlow<String?> = localModelManager.loadingModelId
+    val localBackendChoice: StateFlow<LocalHardwareBackend> = localModelManager.backendChoice
     val deviceHardware: StateFlow<DeviceHardwareSnapshot> = localModelManager.hardware
+    val studioPrefs: StateFlow<ModelStudioPrefsEntity> = localModelManager.prefs
+    val ecoInferenceRestricted: StateFlow<Boolean> = localModelManager.ecoInferenceRestricted
+    val batteryTelemetry: StateFlow<BatteryTelemetrySnapshot> = localModelManager.batteryTelemetry
+    val allBenchmarks: StateFlow<List<ModelBenchmarkEntity>> = localModelManager.allBenchmarks
+    val liveBenchmark: StateFlow<LiveBenchmarkProgress?> = localModelManager.liveBenchmark
+
+    // Live Clock, Calendar & Generative UI Tool Registry state
+    val clockAlarms: StateFlow<List<ClockAlarmEntity>> = localModelManager.clockTools.alarms
+    val clockTimers: StateFlow<List<CountdownTimerItem>> = localModelManager.clockTools.timers
+    val clockStopwatch: StateFlow<StopwatchUiState> = localModelManager.clockTools.stopwatch
+    val calendarEvents: StateFlow<List<CalendarEventEntity>> = localModelManager.calendarTools.events
+    val capturedScreenshots: StateFlow<Map<String, Bitmap>> = localModelManager.deviceTools.capturedScreenshots
+    val isCheckingModelUpdates: StateFlow<Boolean> = localModelManager.isCheckingModelUpdates
+    val registeredTools: List<RegisteredToolDescriptor> = localModelManager.toolRegistry.registeredDescriptors()
+    val toolAuditLog: StateFlow<List<ToolExecutionAuditEntry>> = localModelManager.toolRegistry.auditLog
+    val toolUsageStats: StateFlow<ToolUsageStatsSnapshot> = localModelManager.toolRegistry.usageStats
+    val toolPermissions: StateFlow<ToolPermissionsSnapshot> = localModelManager.toolPermissions
+    val liteRtDiagnosticLogs: StateFlow<List<LiteRtDiagnosticLogEntry>> = localModelManager.diagnosticLogs
+    val liteRtDiagnosticSummary: StateFlow<LiteRtDiagnosticSummary> = localModelManager.diagnosticSummary
+    val streamParserTelemetry: StateFlow<StreamParserTelemetrySnapshot> = StreamParserTelemetry.snapshot
+
+    // Inline Generative UI & Clock widgets attached to assistant chat messages by normalized text key
+    private val _inChatUiPartsByText = MutableStateFlow<Map<String, List<InChatUiPart>>>(emptyMap())
+    val inChatUiPartsByText: StateFlow<Map<String, List<InChatUiPart>>> = _inChatUiPartsByText.asStateFlow()
+
+    val llmConfig: StateFlow<LlmConfig> = studioPrefs
+        .map { p ->
+            LlmConfig(
+                modelName = p.selectedCloudModelId,
+                temperature = p.temperature,
+                topP = p.topP,
+                maxOutputTokens = p.maxOutputTokens,
+                contextWindowTurns = p.contextWindowTurns
+            )
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = LlmConfig()
+        )
+
+    // True ONLY when the user enabled offline chat AND an actual LiteRT-LM model is active in RAM
+    val preferLoadedLocalChat: StateFlow<Boolean> = combine(
+        studioPrefs,
+        loadedLocalModel
+    ) { p, loaded ->
+        p.preferLocalOfflineChat && loaded != null && loaded.supportsOnDeviceInference
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.Eagerly,
+        initialValue = false
+    )
 
     private val _aiState = MutableStateFlow<AiCardUiState>(AiCardUiState.Idle)
     val aiState: StateFlow<AiCardUiState> = _aiState.asStateFlow()
@@ -117,8 +195,11 @@ class MoteViewModel(
     private val _lastMetrics = MutableStateFlow<InferenceMetrics?>(null)
     val lastMetrics: StateFlow<InferenceMetrics?> = _lastMetrics.asStateFlow()
 
-    private val _llmConfig = MutableStateFlow(LlmConfig())
-    val llmConfig: StateFlow<LlmConfig> = _llmConfig.asStateFlow()
+    private val _utilityStatus = MutableStateFlow<String?>(null)
+    val utilityStatus: StateFlow<String?> = _utilityStatus.asStateFlow()
+
+    private val _isBenchmarking = MutableStateFlow(false)
+    val isBenchmarking: StateFlow<Boolean> = _isBenchmarking.asStateFlow()
 
     private val _selectedBotId = MutableStateFlow("focus")
     val selectedBotId: StateFlow<String> = _selectedBotId.asStateFlow()
@@ -127,7 +208,7 @@ class MoteViewModel(
     val actionError: StateFlow<String?> = _actionError.asStateFlow()
 
     private val lanServer = LocalLanApiServer {
-        val list = mutableListOf(_llmConfig.value.modelName)
+        val list = mutableListOf(llmConfig.value.modelName)
         localModelManager.loadedModel.value?.let { list.add("local/${it.modelId}") }
         localModelManager.models.value
             .filter { it.status == LocalModelDownloadStatus.DOWNLOADED }
@@ -140,6 +221,8 @@ class MoteViewModel(
     val lanServerState: StateFlow<LanServerUiState> = lanServer.state
 
     private var activeStreamJob: Job? = null
+    private var lastChatPrompt: String? = null
+    private var lastChatBot: BotPersona? = null
 
     init {
         viewModelScope.launch {
@@ -154,23 +237,84 @@ class MoteViewModel(
     }
 
     fun updateModel(modelName: String) {
-        _llmConfig.update { it.copy(modelName = modelName) }
+        viewModelScope.launch {
+            localModelManager.updatePrefs {
+                it.copy(
+                    selectedCloudModelId = modelName,
+                    preferLocalOfflineChat = false
+                )
+            }
+            val label = HybridAiRouter.supportedModels.firstOrNull { it.id == modelName }?.displayName ?: modelName
+            _utilityStatus.value = "Switched real-time chat to Cloud $label"
+        }
+    }
+
+    fun selectDownloadedModelForChat(modelId: String, onReady: () -> Unit = {}) {
+        viewModelScope.launch {
+            val currentLoaded = localModelManager.loadedModel.value
+            if (currentLoaded != null && currentLoaded.modelId == modelId) {
+                localModelManager.updatePrefs {
+                    it.copy(activeLocalModelId = modelId, preferLocalOfflineChat = true)
+                }
+                _utilityStatus.value = "Switched real-time chat to On-Device ${currentLoaded.displayName}"
+                onReady()
+            } else {
+                localModelManager.loadModel(modelId)
+                    .onSuccess { loaded ->
+                        _utilityStatus.value = "Loaded ${loaded.displayName} (${loaded.backend.label}) for offline chat"
+                        onReady()
+                    }
+                    .onFailure { err ->
+                        _actionError.value = err.localizedMessage ?: "Failed to load local model into RAM."
+                    }
+            }
+        }
     }
 
     fun updateTemperature(temperature: Float) {
-        _llmConfig.update { it.copy(temperature = temperature.coerceIn(0f, 1.5f)) }
+        val clamped = temperature.coerceIn(0f, 1.5f)
+        viewModelScope.launch {
+            localModelManager.updatePrefs { it.copy(temperature = clamped) }
+        }
     }
 
     fun updateTopP(topP: Float) {
-        _llmConfig.update { it.copy(topP = topP.coerceIn(0.1f, 1.0f)) }
+        val clamped = topP.coerceIn(0.1f, 1.0f)
+        viewModelScope.launch {
+            localModelManager.updatePrefs { it.copy(topP = clamped) }
+        }
     }
 
     fun updateMaxOutputTokens(tokens: Int) {
-        _llmConfig.update { it.copy(maxOutputTokens = tokens.coerceIn(128, 4096)) }
+        val clamped = tokens.coerceIn(128, 4096)
+        viewModelScope.launch {
+            localModelManager.updatePrefs { it.copy(maxOutputTokens = clamped) }
+        }
     }
 
     fun updateContextWindowTurns(turns: Int) {
-        _llmConfig.update { it.copy(contextWindowTurns = turns.coerceIn(2, 20)) }
+        val clamped = turns.coerceIn(2, 20)
+        viewModelScope.launch {
+            localModelManager.updatePrefs { it.copy(contextWindowTurns = clamped) }
+        }
+    }
+
+    fun updateWifiOnlyDownloads(wifiOnly: Boolean) {
+        viewModelScope.launch {
+            localModelManager.updatePrefs { it.copy(wifiOnlyDownloads = wifiOnly) }
+        }
+    }
+
+    fun updateRequireBatteryNotLow(batterySafe: Boolean) {
+        viewModelScope.launch {
+            localModelManager.updatePrefs { it.copy(requireBatteryNotLow = batterySafe) }
+        }
+    }
+
+    fun updateAutoLoadLastModel(autoLoad: Boolean) {
+        viewModelScope.launch {
+            localModelManager.updatePrefs { it.copy(autoLoadLastModel = autoLoad) }
+        }
     }
 
     fun toggleBot(bot: BotPersona) {
@@ -189,6 +333,17 @@ class MoteViewModel(
         }
     }
 
+    fun selectLocalBackend(backend: LocalHardwareBackend) = localModelManager.selectBackend(backend)
+
+    fun setPreferLoadedLocalChat(prefer: Boolean) {
+        val canUseLocal = prefer && (localModelManager.loadedModel.value?.supportsOnDeviceInference == true)
+        viewModelScope.launch {
+            localModelManager.updatePrefs { it.copy(preferLocalOfflineChat = canUseLocal) }
+        }
+    }
+
+    fun addCustomModelUrl(displayName: String, url: String) = localModelManager.addCustomUrlAndDownload(displayName, url)
+
     fun startModelDownload(modelId: String) = localModelManager.startDownload(modelId)
 
     fun cancelModelDownload(modelId: String) = localModelManager.cancelDownload(modelId)
@@ -197,19 +352,253 @@ class MoteViewModel(
 
     fun loadLocalModel(modelId: String) {
         viewModelScope.launch {
-            localModelManager.loadModel(modelId).onFailure { err ->
-                _actionError.value = err.localizedMessage ?: "Failed to load GGUF model."
+            localModelManager.loadModel(modelId)
+                .onSuccess { loaded ->
+                    _utilityStatus.value = "Loaded ${loaded.displayName} into RAM (${loaded.backend.label})"
+                }
+                .onFailure { err ->
+                    _actionError.value = err.localizedMessage ?: "Failed to load local model."
+                }
+        }
+    }
+
+    fun unloadLocalModel() {
+        localModelManager.unloadModel()
+        _utilityStatus.value = "Unloaded local model from RAM"
+    }
+
+    fun verifyLocalModelStorage() {
+        viewModelScope.launch {
+            val summary = localModelManager.verifyStorageAndRoom()
+            val clearedMb = summary.clearedTempBytes / (1024.0 * 1024.0)
+            _utilityStatus.value = String.format(
+                Locale.US,
+                "Verified %d model(s) on disk · %d stale fixed · %.1f MB temp cleared",
+                summary.verifiedCount,
+                summary.repairedStaleRecords,
+                clearedMb
+            )
+        }
+    }
+
+    fun clearDownloadTempCache() {
+        viewModelScope.launch {
+            val freed = localModelManager.clearPartialCache()
+            val freedMb = freed / (1024.0 * 1024.0)
+            _utilityStatus.value = String.format(Locale.US, "Cleared %.1f MB of partial download cache", freedMb)
+        }
+    }
+
+    fun clearUnusedModelCache() {
+        viewModelScope.launch {
+            val summary = localModelManager.clearUnusedModelCache()
+            val reclaimedMb = summary.reclaimedBytes / (1024.0 * 1024.0)
+            _utilityStatus.value = buildString {
+                if (summary.clearedModelCount == 0 && summary.deletedOrphanFiles == 0 && summary.reclaimedBytes == 0L) {
+                    append("Model cache is already clean (0 unused local models found)")
+                } else {
+                    append(
+                        String.format(
+                            Locale.US,
+                            "Reclaimed %.1f MB · Cleared %d unused model(s)",
+                            reclaimedMb,
+                            summary.clearedModelCount
+                        )
+                    )
+                    if (summary.deletedOrphanFiles > 0) {
+                        append(" & ${summary.deletedOrphanFiles} temp/orphan file(s)")
+                    }
+                    append(" + Room metadata")
+                }
+                if (!summary.preservedActiveModelName.isNullOrBlank()) {
+                    append(" (kept active: ${summary.preservedActiveModelName})")
+                }
             }
         }
     }
 
-    fun unloadLocalModel() = localModelManager.unloadModel()
+    fun updateDarkThemeEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            localModelManager.updatePrefs { it.copy(darkThemeEnabled = enabled) }
+        }
+    }
+
+    fun updateAutoCheckModelUpdates(enabled: Boolean) {
+        viewModelScope.launch {
+            localModelManager.updatePrefs { it.copy(autoCheckModelUpdates = enabled) }
+            _utilityStatus.value = if (enabled) {
+                "Background model update checks enabled (every 12h via WorkManager)"
+            } else {
+                "Background model update checks paused"
+            }
+        }
+    }
+
+    fun checkForModelUpdatesNow(autoDownload: Boolean = true) {
+        localModelManager.checkForModelUpdatesNow(autoDownload = autoDownload)
+        _utilityStatus.value = "Checking downloaded local models for updates in background..."
+    }
+
+    fun exportSettingsBackup(uri: Uri) {
+        viewModelScope.launch {
+            val currentBots = (botsState.value as? BotsUiState.Success)?.bots.orEmpty()
+            val result = localModelManager.exportSettingsBackup(uri, currentBots)
+            if (result.success) {
+                _utilityStatus.value = result.message
+            } else {
+                _actionError.value = result.message
+            }
+        }
+    }
+
+    fun importSettingsBackup(uri: Uri) {
+        viewModelScope.launch {
+            localModelManager.importSettingsBackup(uri)
+                .onSuccess { (result, restoredBots) ->
+                    val existingIds = (botsState.value as? BotsUiState.Success)?.bots?.map { it.id }?.toSet().orEmpty()
+                    restoredBots.forEach { bot ->
+                        repo.upsertBot(bot, isExisting = bot.id in existingIds)
+                    }
+                    _utilityStatus.value = result.message
+                }
+                .onFailure { err ->
+                    _actionError.value = err.localizedMessage ?: "Failed to import JSON settings backup."
+                }
+        }
+    }
+
+    fun benchmarkLoadedLocalModel() {
+        val activeId = localModelManager.loadedModel.value?.modelId
+        if (activeId == null) {
+            _actionError.value = "Load a downloaded phone model into RAM first to run a benchmark."
+            return
+        }
+        runModelBenchmark(activeId, BenchmarkPromptPreset.QUICK_QA)
+    }
+
+    fun runModelBenchmark(modelId: String, preset: BenchmarkPromptPreset) {
+        if (_isBenchmarking.value) return
+        viewModelScope.launch {
+            _isBenchmarking.value = true
+            localModelManager.runHardwareBenchmark(modelId, preset)
+                .onSuccess { record ->
+                    _lastMetrics.value = InferenceMetrics(
+                        latencyMs = record.totalLatencyMs,
+                        ttftMs = record.ttftMs,
+                        approxTokensPerSec = record.tokensPerSec,
+                        modelName = "${record.modelDisplayName} (${record.backendUsed})"
+                    )
+                    _utilityStatus.value = String.format(
+                        Locale.US,
+                        "Benchmark (%s · %s): %.1f tok/s · TTFT %dms · %.1f°C",
+                        record.promptProfile,
+                        record.backendUsed,
+                        record.tokensPerSec,
+                        record.ttftMs,
+                        record.peakTempC
+                    )
+                }
+                .onFailure { err ->
+                    _actionError.value = err.localizedMessage ?: "Hardware benchmark failed."
+                }
+            _isBenchmarking.value = false
+        }
+    }
+
+    fun updateEcoInferenceEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            localModelManager.updatePrefs { it.copy(ecoInferenceEnabled = enabled) }
+        }
+    }
+
+    // Direct Clock Tool UI Controls
+    fun toggleClockAlarm(alarmId: String, enabled: Boolean) =
+        localModelManager.clockTools.toggleAlarmById(alarmId, enabled)
+
+    fun shiftClockAlarmMinutes(alarmId: String, deltaMinutes: Int) =
+        localModelManager.clockTools.shiftAlarmMinutes(alarmId, deltaMinutes)
+
+    fun deleteClockAlarm(alarmId: String) =
+        localModelManager.clockTools.deleteAlarmById(alarmId)
+
+    fun syncClockAlarmToAndroid(alarm: ClockAlarmEntity): Boolean =
+        localModelManager.clockTools.syncAlarmToAndroidClock(alarm)
+
+    fun controlClockTimer(action: String, timerId: String) {
+        localModelManager.clockTools.controlTimer(action, timerId)
+    }
+
+    fun addSecondsToClockTimer(timerId: String, extraSeconds: Int) {
+        localModelManager.clockTools.addSecondsToTimer(timerId, extraSeconds)
+    }
+
+    fun controlClockStopwatch(action: String) {
+        localModelManager.clockTools.controlStopwatch(action)
+    }
+
+    fun deleteCalendarEvent(eventId: String) =
+        localModelManager.calendarTools.deleteEventById(eventId)
+
+    fun syncCalendarEventToAndroid(event: CalendarEventEntity): Boolean =
+        localModelManager.calendarTools.syncEventToAndroidCalendar(event)
+
+    fun syncDeviceCalendarNow() {
+        viewModelScope.launch {
+            val count = localModelManager.calendarTools.syncFromAndroidCalendarProvider()
+            localModelManager.refreshToolPermissions()
+            if (count > 0) {
+                _utilityStatus.value = "Synced $count event(s) from Android Calendar Provider"
+            }
+        }
+    }
+
+    fun setToolEnabled(toolId: String, enabled: Boolean) {
+        viewModelScope.launch {
+            localModelManager.updatePrefs { current ->
+                when (toolId) {
+                    GenUiToolRegistry.TOOL_ALARM_MANAGER -> current.copy(toolAlarmEnabled = enabled)
+                    GenUiToolRegistry.TOOL_COUNTDOWN_TIMER -> current.copy(toolTimerEnabled = enabled)
+                    GenUiToolRegistry.TOOL_STOPWATCH -> current.copy(toolStopwatchEnabled = enabled)
+                    GenUiToolRegistry.TOOL_CALENDAR -> current.copy(toolCalendarEnabled = enabled)
+                    GenUiToolRegistry.TOOL_CAMERA -> current.copy(toolCameraEnabled = enabled)
+                    GenUiToolRegistry.TOOL_SCREEN_CAPTURE -> current.copy(toolScreenCaptureEnabled = enabled)
+                    GenUiToolRegistry.TOOL_APP_LAUNCHER -> current.copy(toolAppLauncherEnabled = enabled)
+                    GenUiToolRegistry.TOOL_NAVIGATION -> current.copy(toolNavigationEnabled = enabled)
+                    GenUiToolRegistry.TOOL_GEN_UI_WIDGETS -> current.copy(toolGenUiEnabled = enabled)
+                    else -> current
+                }
+            }
+        }
+    }
+
+    fun refreshToolPermissions() = localModelManager.refreshToolPermissions()
+
+    fun clearToolAuditLog() = localModelManager.toolRegistry.clearAuditLog()
+
+    fun runLiteRtSelfCheck() = localModelManager.runDiagnosticSelfCheck()
+
+    fun clearLiteRtDiagnosticLogs() {
+        localModelManager.clearDiagnosticLogs()
+        StreamParserTelemetry.reset()
+    }
+
+    fun formatLiteRtDiagnosticReport(): String = localModelManager.formatDiagnosticReport()
+
+    fun refreshBatteryTelemetry() = localModelManager.refreshBatteryTelemetry()
+
+    fun clearUtilityStatus() {
+        _utilityStatus.value = null
+    }
 
     fun importLocalModel(uri: Uri) {
         viewModelScope.launch {
-            localModelManager.importModelFromUri(uri).onFailure { err ->
-                _actionError.value = err.localizedMessage ?: "Failed to import model file."
-            }
+            localModelManager.importModelFromUri(uri)
+                .onSuccess { imported ->
+                    _utilityStatus.value = "Imported ${imported.displayName} into Room registry"
+                }
+                .onFailure { err ->
+                    _actionError.value = err.localizedMessage ?: "Failed to import model file."
+                }
         }
     }
 
@@ -222,6 +611,7 @@ class MoteViewModel(
     fun toggleLanBearerToken(requireToken: Boolean) = lanServer.toggleRequireToken(requireToken)
 
     fun stopStreaming() {
+        localModelManager.cancelActiveLocalGeneration()
         activeStreamJob?.cancel()
         activeStreamJob = null
         _chatStreamState.value = ChatStreamUiState.Idle
@@ -243,6 +633,8 @@ class MoteViewModel(
         val displayPrompt = if (attachedBitmap != null) "[Image attached] $effectivePrompt" else effectivePrompt
 
         activeStreamJob?.cancel()
+        lastChatPrompt = effectivePrompt
+        lastChatBot = bot
         activeStreamJob = viewModelScope.launch {
             _chatStreamState.value = ChatStreamUiState.Streaming(
                 partialText = "",
@@ -260,41 +652,151 @@ class MoteViewModel(
             }
 
             try {
-                var finalAnswer = ""
-                router.streamChatMessage(
-                    userPrompt = effectivePrompt,
-                    botSystemPrompt = systemPrompt,
-                    history = priorHistory,
-                    config = _llmConfig.value,
-                    attachedBitmap = attachedBitmap
-                ).collect { event ->
+                val executedBlocks = mutableSetOf<String>()
+                val liveUiParts = mutableListOf<InChatUiPart>()
+                val clockContext = buildString {
+                    appendLine(localModelManager.clockTools.buildClockContextForAi())
+                    appendLine()
+                    appendLine(localModelManager.calendarTools.buildCalendarContextForAi())
+                    appendLine()
+                    appendLine(localModelManager.deviceTools.buildDeviceContextForAi())
+                }.trim()
+                val enabledToolIds = localModelManager.toolRegistry.enabledToolIds(studioPrefs.value)
+
+                // If user preferred a downloaded local model that isn't loaded in RAM yet, load it automatically
+                var useLocalLiteRt = attachedBitmap == null &&
+                    preferLoadedLocalChat.value &&
+                    localModelManager.loadedModel.value?.supportsOnDeviceInference == true
+                if (!useLocalLiteRt && attachedBitmap == null && studioPrefs.value.preferLocalOfflineChat) {
+                    val savedId = studioPrefs.value.activeLocalModelId
+                    if (!savedId.isNullOrBlank()) {
+                        _chatStreamState.value = ChatStreamUiState.Streaming(
+                            partialText = "",
+                            botName = botName,
+                            elapsedMs = 0L,
+                            pendingToolHint = "Loading downloaded model into RAM..."
+                        )
+                        val loadedResult = localModelManager.loadModel(savedId)
+                        useLocalLiteRt = loadedResult.isSuccess
+                    }
+                }
+
+                val streamFlow = if (useLocalLiteRt) {
+                    val localSystemInstruction = buildString {
+                        appendLine(systemPrompt)
+                        appendLine("Be concise, direct, and helpful.")
+                        appendLine()
+                        appendLine(ChatGenUiToolProtocol.buildToolSystemInstructions(clockContext, enabledToolIds))
+                    }
+                    val recentContextPrompt = buildString {
+                        val recent = priorHistory.takeLast(4)
+                        if (recent.isNotEmpty()) {
+                            appendLine("Recent conversation:")
+                            recent.forEach { msg ->
+                                val speaker = if (msg.chatRole() == ChatRole.USER) "User" else "Assistant"
+                                appendLine("$speaker: ${msg.text.take(220)}")
+                            }
+                            appendLine()
+                        }
+                        append("User: $effectivePrompt")
+                    }
+                    localModelManager.streamLoadedLocalModel(
+                        prompt = recentContextPrompt,
+                        systemPrompt = localSystemInstruction,
+                        temperature = llmConfig.value.temperature,
+                        topP = llmConfig.value.topP
+                    )
+                } else {
+                    router.streamChatMessage(
+                        userPrompt = effectivePrompt,
+                        botSystemPrompt = systemPrompt,
+                        history = priorHistory,
+                        config = llmConfig.value,
+                        attachedBitmap = attachedBitmap,
+                        clockContext = clockContext,
+                        enabledToolIds = enabledToolIds
+                    )
+                }
+
+                var cleanFinalAnswer = ""
+                val finalToolBlocks = mutableListOf<String>()
+
+                streamFlow.collect { event ->
                     when (event) {
                         is ChatStreamEvent.Delta -> {
+                            for (rawJson in event.completedToolJsonBlocks) {
+                                if (executedBlocks.add(rawJson)) {
+                                    executeChatToolJson(rawJson)?.let { part ->
+                                        liveUiParts.add(part)
+                                    }
+                                }
+                            }
                             _chatStreamState.value = ChatStreamUiState.Streaming(
                                 partialText = event.accumulatedText,
                                 botName = botName,
-                                elapsedMs = event.elapsedMs
+                                elapsedMs = event.elapsedMs,
+                                pendingToolHint = event.pendingToolHint,
+                                liveParts = liveUiParts.toList()
                             )
                         }
                         is ChatStreamEvent.Completed -> {
-                            finalAnswer = event.fullText
+                            cleanFinalAnswer = event.fullText
+                            finalToolBlocks.clear()
+                            finalToolBlocks.addAll(event.completedToolJsonBlocks)
                             _lastMetrics.value = event.metrics
                         }
                     }
                 }
 
-                if (finalAnswer.isNotBlank()) {
+                for (rawJson in finalToolBlocks) {
+                    if (executedBlocks.add(rawJson)) {
+                        executeChatToolJson(rawJson)?.let { part ->
+                            liveUiParts.add(part)
+                        }
+                    }
+                }
+
+                val cleanAnswer = cleanFinalAnswer.ifBlank {
+                    when (val firstPart = liveUiParts.firstOrNull()) {
+                        is InChatUiPart.ClockAlarmsPanel -> firstPart.actionSummary
+                        is InChatUiPart.ClockTimerPanel -> firstPart.actionSummary
+                        is InChatUiPart.ClockStopwatchPanel -> firstPart.actionSummary
+                        is InChatUiPart.CalendarEventsPanel -> firstPart.actionSummary
+                        is InChatUiPart.DeviceActionPanel -> firstPart.summary
+                        is InChatUiPart.ScreenCapturePanel -> firstPart.summary
+                        is InChatUiPart.GenUiCardPart -> firstPart.spec.title
+                        is InChatUiPart.ToolStatusBanner -> firstPart.message
+                        null -> ""
+                    }
+                }
+
+                if (cleanAnswer.isNotBlank()) {
+                    if (liveUiParts.isNotEmpty()) {
+                        _inChatUiPartsByText.value = _inChatUiPartsByText.value + (cleanAnswer to liveUiParts.toList())
+                    }
                     chatStore.appendMessage(
                         role = ChatRole.ASSISTANT,
                         botId = botId,
                         botName = botName,
-                        text = finalAnswer,
-                        engineUsed = EngineUsed.CLOUD_FLASH.name
+                        text = cleanAnswer,
+                        engineUsed = if (useLocalLiteRt) EngineUsed.LOCAL_NANO.name else EngineUsed.CLOUD_FLASH.name
                     ).onFailure { err ->
                         _actionError.value = err.localizedMessage ?: "Failed to save assistant reply."
                     }
                 }
                 _chatStreamState.value = ChatStreamUiState.Idle
+                refreshToolPermissions()
+
+                // If the AI invoked captureAndAnalyzeScreen (or takeScreenshot with analyze=true),
+                // automatically stream multimodal visual analysis on the captured MediaProjection Bitmap!
+                val pendingVisualCapture = liveUiParts
+                    .filterIsInstance<InChatUiPart.ScreenCapturePanel>()
+                    .firstOrNull { it.success && it.captureId != null && !it.autoAnalyzePrompt.isNullOrBlank() }
+                if (pendingVisualCapture != null) {
+                    val capId = pendingVisualCapture.captureId!!
+                    val analysisPrompt = pendingVisualCapture.autoAnalyzePrompt!!
+                    analyzeCapturedScreenshot(captureId = capId, customPrompt = analysisPrompt, bot = bot)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -303,6 +805,57 @@ class MoteViewModel(
                 )
             }
         }
+    }
+
+    /**
+     * Feeds a captured MediaProjection screenshot Bitmap directly into multimodal vision chat
+     * so the AI visually inspects the screen and streams analysis inline.
+     */
+    fun analyzeCapturedScreenshot(
+        captureId: String,
+        customPrompt: String? = null,
+        bot: BotPersona? = null
+    ) {
+        val bmp = localModelManager.deviceTools.capturedScreenshots.value[captureId]
+        if (bmp == null || bmp.isRecycled) {
+            _actionError.value = "Captured screenshot is no longer in memory. Capture a fresh screenshot to analyze."
+            return
+        }
+        val activeBots = (botsState.value as? BotsUiState.Success)?.bots.orEmpty()
+        val chosenBot = bot
+            ?: activeBots.firstOrNull { it.id == _selectedBotId.value }
+            ?: activeBots.firstOrNull { it.active }
+            ?: activeBots.firstOrNull()
+        val prompt = customPrompt?.trim()?.takeIf { it.isNotBlank() }
+            ?: "Visually analyze this captured screenshot: describe what is shown, read key text, and suggest useful next actions."
+        sendStreamingChatMessage(
+            prompt = prompt,
+            bot = chosenBot,
+            attachedBitmap = bmp
+        )
+    }
+
+    fun retryLastChatMessage(switchToLiteModel: Boolean = false) {
+        val prompt = lastChatPrompt ?: return
+        val bot = lastChatBot
+        _chatStreamState.value = ChatStreamUiState.Idle
+        viewModelScope.launch {
+            if (switchToLiteModel) {
+                localModelManager.updatePrefs {
+                    it.copy(
+                        selectedCloudModelId = HybridAiRouter.LITE_MODEL_NAME,
+                        preferLocalOfflineChat = false
+                    )
+                }
+            }
+            sendStreamingChatMessage(prompt = prompt, bot = bot)
+        }
+    }
+
+    private suspend fun executeChatToolJson(rawJson: String): InChatUiPart? {
+        val invocation = ChatGenUiToolProtocol.decodeToolInvocation(rawJson) ?: return null
+        val result = localModelManager.toolRegistry.dispatch(invocation) ?: return null
+        return result.uiPart
     }
 
     fun generateFocusControlCard(
@@ -329,7 +882,7 @@ class MoteViewModel(
                 botSystemPrompt = botSystemPrompt,
                 redactedScreenContext = redactedScreenContext,
                 isForeground = true,
-                modelName = _llmConfig.value.modelName
+                modelName = llmConfig.value.modelName
             ).onSuccess { result ->
                 _aiState.value = AiCardUiState.Success(result)
                 val widgetNames = result.spec.widgets.joinToString(", ") { it.label }
@@ -376,6 +929,7 @@ class MoteViewModel(
 
     override fun onCleared() {
         super.onCleared()
+        localModelManager.shutdown()
         lanServer.stop()
     }
 

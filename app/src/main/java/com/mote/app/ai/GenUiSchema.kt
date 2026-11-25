@@ -44,6 +44,14 @@ data class GenUiComparisonRow(
     val rightValue: String
 )
 
+@Serializable
+data class GenUiCalendarEvent(
+    val dayLabel: String,
+    val title: String,
+    val timeRange: String = "",
+    val location: String = ""
+)
+
 /**
  * Rich Generative UI component schema inspired by Google Generative UI, A2UI,
  * and Vercel AI SDK Generative User Interfaces.
@@ -51,9 +59,9 @@ data class GenUiComparisonRow(
 @Serializable
 data class GenUiWidgetSpec(
     /**
-     * Supported interactive widget types:
+     * Supported interactive widget types registered in GenUiComponentRegistry:
      * - slider | toggle | action_chip | confirm_button | reply_pills | info_card
-     * - metric_grid | bar_chart | checklist | comparison_table | timeline | quiz_card
+     * - metric_grid | bar_chart | checklist | comparison_table | timeline | quiz_card | calendar
      */
     val type: String,
     val id: String,
@@ -64,6 +72,7 @@ data class GenUiWidgetSpec(
     val metrics: List<GenUiKeyValue> = emptyList(),
     val chartBars: List<GenUiChartBar> = emptyList(),
     val timelineSteps: List<GenUiTimelineStep> = emptyList(),
+    val calendarEvents: List<GenUiCalendarEvent> = emptyList(),
     val comparisonHeaders: List<String> = emptyList(),
     val comparisonRows: List<GenUiComparisonRow> = emptyList(),
     val correctOptionIndex: Int? = null,
