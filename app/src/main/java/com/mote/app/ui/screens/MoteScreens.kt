@@ -71,6 +71,8 @@ fun SecurityCenterScreen(
     val clockTimers by viewModel.clockTimers.collectAsStateWithLifecycle()
     val clockStopwatch by viewModel.clockStopwatch.collectAsStateWithLifecycle()
     val calendarEvents by viewModel.calendarEvents.collectAsStateWithLifecycle()
+    val networkStatus by viewModel.networkStatus.collectAsStateWithLifecycle()
+    val overlayCustomization by viewModel.overlayCustomization.collectAsStateWithLifecycle()
 
     var piiEnabled by remember { mutableStateOf(true) }
     var blockBanking by remember { mutableStateOf(true) }
@@ -98,7 +100,36 @@ fun SecurityCenterScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(bottom = 112.dp)
         ) {
-            // 1. Model Tools Registry Control Center (enable/disable AlarmManager, Timer, Stopwatch, Calendar, GenUI)
+            // 0. Live Command Widgets Deck (Clock, Wi-Fi/Network, Camera, Live Cursor)
+            item(key = "tools_advanced_live_widgets_deck") {
+                AdvancedLiveWidgetsDeck(
+                    alarms = clockAlarms,
+                    timers = clockTimers,
+                    stopwatch = clockStopwatch,
+                    network = networkStatus,
+                    accessibilityReady = toolPermissions.accessibilityGranted,
+                    initiallyExpanded = true,
+                    onStartStopwatch = {
+                        viewModel.controlClockStopwatch(if (clockStopwatch.isRunning) "pause" else "start")
+                    },
+                    onLapStopwatch = { viewModel.controlClockStopwatch("lap") },
+                    onStartQuickTimer5m = { viewModel.startQuickClockTimer(300, "5m Focus") },
+                    onQuickAlarm10m = { viewModel.createQuickRelativeAlarm(10, "Quick 10m Alarm") },
+                    onOpenWifiPanel = { viewModel.openWifiPanelQuick() },
+                    onRunNetworkPing = { viewModel.runNetworkPingQuick() },
+                    onRefreshNetwork = { viewModel.refreshNetworkStatusQuick() },
+                    onOpenCameraPhoto = { viewModel.openCameraQuick("photo", "back") },
+                    onOpenCameraSelfie = { viewModel.openCameraQuick("selfie", "front") },
+                    onOpenCameraVideo = { viewModel.openCameraQuick("video", "back") },
+                    onToggleTorch = { viewModel.toggleFlashlightQuick(null) },
+                    onTriggerCameraShutter = { viewModel.triggerCameraShutterQuick() },
+                    onPreviewCursor = { viewModel.previewLiveCursorDemo() },
+                    onSwipeDown = { viewModel.swipeScreenQuick("down") },
+                    onSwipeUp = { viewModel.swipeScreenQuick("up") }
+                )
+            }
+
+            // 1. Model Tools Registry Control Center (enable/disable AlarmManager, Timer, Stopwatch, Calendar, Camera, Network, Cursor, GenUI)
             item(key = "model_tools_registry_card") {
                 ModelToolsRegistryCard(
                     tools = viewModel.registeredTools,
@@ -305,6 +336,16 @@ fun SecurityCenterScreen(
                 }
             }
 
+            // Overlay & Live Cursor Customization Studio
+            item(key = "tools_overlay_customization_card") {
+                OverlayCustomizationCard(
+                    config = overlayCustomization,
+                    onUpdateConfig = { transform -> viewModel.updateOverlayCustomization(transform) },
+                    onTestLiveCursor = { viewModel.previewLiveCursorDemo() },
+                    onResetOverlayPosition = { viewModel.resetOverlayPosition() }
+                )
+            }
+
             item(key = "pii_guard_card") {
                 MoteCard {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -383,6 +424,7 @@ fun SettingsScreen(
     val actionError by viewModel.actionError.collectAsStateWithLifecycle()
     val systemHealth by viewModel.systemHealth.collectAsStateWithLifecycle()
     val lastAdaptiveRouteNote by viewModel.lastAdaptiveRouteNote.collectAsStateWithLifecycle()
+    val overlayCustomization by viewModel.overlayCustomization.collectAsStateWithLifecycle()
     var haptics by remember { mutableStateOf(true) }
     var authError by remember { mutableStateOf<String?>(null) }
     var showToolPermissions by remember { mutableStateOf(false) }
@@ -591,6 +633,14 @@ fun SettingsScreen(
                     onRefresh = { viewModel.refreshSystemHealth() }
                 )
             }
+            item(key = "settings_overlay_customization_card") {
+                OverlayCustomizationCard(
+                    config = overlayCustomization,
+                    onUpdateConfig = { transform -> viewModel.updateOverlayCustomization(transform) },
+                    onTestLiveCursor = { viewModel.previewLiveCursorDemo() },
+                    onResetOverlayPosition = { viewModel.resetOverlayPosition() }
+                )
+            }
             item(key = "settings_tool_model_permissions_entry") {
                 val tokens = LocalMoteColors.current
                 MoteCard(
@@ -633,13 +683,13 @@ fun SettingsScreen(
                                     color = MoteNavy
                                 )
                                 Text(
-                                    text = "$authorizedToolsCount/9 AI tools authorized · ${toolPermissions.grantedCount}/${toolPermissions.totalCount} Android perms",
+                                    text = "$authorizedToolsCount/${viewModel.registeredTools.size} AI tools active · ${toolPermissions.grantedCount}/${toolPermissions.totalCount} Android perms",
                                     fontSize = 11.5.sp,
                                     color = tokens.accentBlue,
                                     fontWeight = FontWeight.Medium
                                 )
                                 Text(
-                                    text = "Manage Clock, Calendar, Camera, Screenshots, Apps, Navigation & GenUI.",
+                                    text = "Manage Clock, Calendar, Camera, Phone, Wi-Fi, Live Cursor, Clipboard & GenUI.",
                                     fontSize = 11.sp,
                                     color = SlateMuted
                                 )

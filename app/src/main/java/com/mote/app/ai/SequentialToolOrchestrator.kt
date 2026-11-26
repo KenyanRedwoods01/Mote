@@ -350,8 +350,15 @@ class SequentialToolOrchestrator(
             if (i < invocations.lastIndex) {
                 val nextInv = invocations[i + 1]
                 val launchedExternal = isExternalAppTransitionStep(resolvedInv.tool)
+                val nextOpLower = nextInv.tool.lowercase(Locale.US)
                 val nextNeedsScreen = isScreenCaptureStep(nextInv.tool) ||
-                    nextInv.tool.lowercase(Locale.US) in setOf("pastetoscreen", "pastetext", "pastefocused")
+                    nextOpLower in setOf(
+                        "pastetoscreen", "pastetext", "pastefocused",
+                        "clickcallbutton", "clickcall", "presscall",
+                        "presscamerashutter", "camerashutter",
+                        "hoverandclick", "hoverelement", "clickelement", "tapelement",
+                        "swipescreen", "scrollscreen", "typeinfield", "inspectscreenelements"
+                    )
 
                 if (launchedExternal && nextNeedsScreen) {
                     val targetLabel = context.lastOpenedApp ?: resolvedInv.args["appName"]?.jsonPrimitive?.contentOrNull ?: "target app"
@@ -664,8 +671,34 @@ class SequentialToolOrchestrator(
                 continue
             }
 
-            // 4. Phone Call / Dial Number
-            val phoneMatch = Regex("""(?:call|dial|ring|phone)\s+([+0-9][0-9\-\s()]{2,18})""", RegexOption.IGNORE_CASE).find(clause)
+            // 4. Phone Call / Dial Number / Click Call Button / Send SMS
+            if (lower.contains("click call") || lower.contains("press call") || lower.contains("tap call")) {
+                planned.add(
+                    ChatToolInvocation(
+                        tool = "clickCallButton",
+                        args = buildJsonObject {
+                            lastDialedNum?.let { put("phoneNumber", JsonPrimitive(it)) }
+                        }
+                    )
+                )
+                continue
+            }
+            val smsMatch = Regex("""(?:send\s+(?:an?\s+)?(?:sms|text)|text)\s+(?:to\s+)?([+0-9][0-9\-\s()]{2,18})(?:\s+(?:saying|that|:)\s+(.+))?""", RegexOption.IGNORE_CASE).find(clause)
+            if (smsMatch != null) {
+                val number = smsMatch.groupValues[1].trim()
+                val body = smsMatch.groupValues.getOrNull(2)?.trim().orEmpty()
+                planned.add(
+                    ChatToolInvocation(
+                        tool = "sendSms",
+                        args = buildJsonObject {
+                            put("phoneNumber", JsonPrimitive(number))
+                            if (body.isNotBlank()) put("message", JsonPrimitive(body))
+                        }
+                    )
+                )
+                continue
+            }
+            val phoneMatch = Regex("""(?:call|dial|ring|phone)\s+([+0-9*#][0-9*#\-\s()]{2,18})""", RegexOption.IGNORE_CASE).find(clause)
             if (phoneMatch != null) {
                 val number = phoneMatch.groupValues[1].trim()
                 lastDialedNum = number
@@ -675,6 +708,17 @@ class SequentialToolOrchestrator(
                         args = buildJsonObject { put("phoneNumber", JsonPrimitive(number)) }
                     )
                 )
+                // If Accessibility live cursor is active or user asked to place/click call, chain clickCallButton!
+                if (MoteAccessibilityService.instance != null &&
+                    (lower.contains("call") || lower.contains("ring") || lower.contains("click") || lower.contains("place"))
+                ) {
+                    planned.add(
+                        ChatToolInvocation(
+                            tool = "clickCallButton",
+                            args = buildJsonObject { put("phoneNumber", JsonPrimitive(number)) }
+                        )
+                    )
+                }
                 // If same clause also mentions listening/voice/TTS/STT, chain the live voice relay
                 if (lower.contains("listen") || lower.contains("tts") || lower.contains("speech") ||
                     lower.contains("respond") || lower.contains("talk") || lower.contains("voice")
@@ -769,8 +813,10 @@ class SequentialToolOrchestrator(
                 continue
             }
 
-            // 8. Alarm creation / deletion / listing
-            if (GenUiToolRegistry.TOOL_ALARM_MANAGER in enabledToolIds && lower.contains("alarm")) {
+            // 8. Alarm creation / update / toggle / deletion / listing
+            if (GenUiToolRegistry.TOOL_ALARM_MANAGER in enabledToolIds &&
+                (lower.contains("alarm") || lower.contains("wake me"))
+            ) {
                 when {
                     lower.contains("delete") || lower.contains("cancel") || lower.contains("remove") -> {
                         val query = if (lower.contains("all")) "all" else extractAlarmLabel(clause) ?: ""
@@ -781,13 +827,52 @@ class SequentialToolOrchestrator(
                             )
                         )
                     }
-                    lower.contains("list") || lower.contains("show") || lower.contains("what alarm") -> {
+                    lower.contains("turn off") || lower.contains("disable") || lower.contains("unset") -> {
+                        val query = if (lower.contains("all")) "all" else extractAlarmLabel(clause) ?: ""
+                        planned.add(
+                            ChatToolInvocation(
+                                tool = "toggleAlarm",
+                                args = buildJsonObject {
+                                    put("query", JsonPrimitive(query))
+                                    put("enabled", JsonPrimitive(false))
+                                }
+                            )
+                        )
+                    }
+                    lower.contains("turn on") || lower.contains("enable") -> {
+                        val query = if (lower.contains("all")) "all" else extractAlarmLabel(clause) ?: ""
+                        planned.add(
+                            ChatToolInvocation(
+                                tool = "toggleAlarm",
+                                args = buildJsonObject {
+                                    put("query", JsonPrimitive(query))
+                                    put("enabled", JsonPrimitive(true))
+                                }
+                            )
+                        )
+                    }
+                    lower.contains("list") || lower.contains("show") || lower.contains("what alarm") || lower.contains("my alarm") -> {
                         planned.add(ChatToolInvocation("listAlarms", JsonObject(emptyMap())))
                     }
                     else -> {
+                        val relativeMatch = Regex("""in\s+(\d+)\s*(minutes?|mins?|m|hours?|hrs?|h)\b""").find(lower)
                         val parsedTime = parseHourMinute(lower)
-                        if (parsedTime != null) {
-                            val label = extractAlarmLabel(clause) ?: "Alarm"
+                        val label = extractAlarmLabel(clause) ?: "Alarm"
+                        if (relativeMatch != null && parsedTime == null) {
+                            val amount = relativeMatch.groupValues[1].toIntOrNull() ?: 5
+                            val isHours = relativeMatch.groupValues[2].startsWith("h")
+                            val mins = if (isHours) amount * 60 else amount
+                            planned.add(
+                                ChatToolInvocation(
+                                    tool = "addAlarm",
+                                    args = buildJsonObject {
+                                        put("inMinutes", JsonPrimitive(mins))
+                                        put("label", JsonPrimitive(label))
+                                        put("enabled", JsonPrimitive(true))
+                                    }
+                                )
+                            )
+                        } else if (parsedTime != null) {
                             planned.add(
                                 ChatToolInvocation(
                                     tool = "addAlarm",
@@ -799,21 +884,25 @@ class SequentialToolOrchestrator(
                                     }
                                 )
                             )
+                        } else {
+                            planned.add(ChatToolInvocation("listAlarms", JsonObject(emptyMap())))
                         }
                     }
                 }
                 continue
             }
 
-            // 9. Countdown Timer
-            if (GenUiToolRegistry.TOOL_COUNTDOWN_TIMER in enabledToolIds && lower.contains("timer")) {
+            // 9. Countdown Timer (supports "timer" and "countdown")
+            if (GenUiToolRegistry.TOOL_COUNTDOWN_TIMER in enabledToolIds &&
+                (lower.contains("timer") || lower.contains("countdown"))
+            ) {
                 when {
                     lower.contains("pause") -> planned.add(ChatToolInvocation("pauseTimer", JsonObject(emptyMap())))
                     lower.contains("resume") -> planned.add(ChatToolInvocation("resumeTimer", JsonObject(emptyMap())))
                     lower.contains("reset") -> planned.add(ChatToolInvocation("resetTimer", JsonObject(emptyMap())))
-                    lower.contains("delete") || lower.contains("cancel") || lower.contains("stop") ->
+                    lower.contains("delete") || lower.contains("cancel") || lower.contains("stop") || lower.contains("clear") ->
                         planned.add(ChatToolInvocation("deleteTimer", JsonObject(emptyMap())))
-                    lower.contains("status") || lower.contains("left") || lower.contains("remaining") ->
+                    lower.contains("status") || lower.contains("left") || lower.contains("remaining") || lower.contains("how much") ->
                         planned.add(ChatToolInvocation("getTimerStatus", JsonObject(emptyMap())))
                     else -> {
                         val secs = parseDurationSeconds(lower) ?: 300
@@ -831,20 +920,76 @@ class SequentialToolOrchestrator(
                 continue
             }
 
-            // 10. Stopwatch
-            if (GenUiToolRegistry.TOOL_STOPWATCH in enabledToolIds && lower.contains("stopwatch")) {
+            // 10. Stopwatch (supports "stopwatch", "stop watch", "record lap")
+            if (GenUiToolRegistry.TOOL_STOPWATCH in enabledToolIds &&
+                (lower.contains("stopwatch") || lower.contains("stop watch") || Regex("""\b(lap|split)\b""").containsMatchIn(lower))
+            ) {
                 val op = when {
-                    lower.contains("pause") || lower.contains("stop") -> "pauseStopwatch"
-                    lower.contains("lap") -> "lapStopwatch"
-                    lower.contains("reset") -> "resetStopwatch"
-                    lower.contains("status") -> "getStopwatchStatus"
+                    lower.contains("pause") || Regex("""\bstop\s+(the\s+)?stop\s*watch\b""").containsMatchIn(lower) ||
+                        (lower.contains("stop") && !lower.contains("start") && !lower.contains("stop watch")) -> "pauseStopwatch"
+                    lower.contains("lap") || lower.contains("split") -> "lapStopwatch"
+                    lower.contains("reset") || lower.contains("clear") -> "resetStopwatch"
+                    lower.contains("status") || lower.contains("elapsed") || lower.contains("how long") -> "getStopwatchStatus"
                     else -> "startStopwatch"
                 }
                 planned.add(ChatToolInvocation(op, JsonObject(emptyMap())))
                 continue
             }
 
-            // 11. Flashlight / Camera
+            // 10b. Wi-Fi & Network Tools
+            if (lower.contains("wifi") || lower.contains("wi-fi") || lower.contains("network") ||
+                lower.contains("internet") || lower.contains("ping") || lower.contains("airplane mode") ||
+                lower.contains("mobile data")
+            ) {
+                val op = when {
+                    lower.contains("ping") || lower.contains("latency") || lower.contains("test internet") || lower.contains("speed") ->
+                        "testConnectivity"
+                    lower.contains("airplane") || lower.contains("flight mode") -> "airplaneMode"
+                    lower.contains("mobile data") || lower.contains("cellular") -> "mobileData"
+                    lower.contains("internet panel") || lower.contains("connectivity") -> "openInternetPanel"
+                    lower.contains("open wifi") || lower.contains("wifi panel") || lower.contains("turn on wifi") ||
+                        lower.contains("turn off wifi") || lower.contains("toggle wifi") || lower.contains("connect wifi") ->
+                        "openWifiPanel"
+                    else -> "getNetworkStatus"
+                }
+                planned.add(ChatToolInvocation(op, JsonObject(emptyMap())))
+                continue
+            }
+
+            // 10c. Application Control & Real-Time Cursor Hover Tools
+            if (lower.contains("inspect screen") || lower.contains("screen elements") || lower.contains("list buttons") || lower.contains("ui elements")) {
+                planned.add(ChatToolInvocation("inspectScreenElements", JsonObject(emptyMap())))
+                continue
+            }
+            val swipeMatch = Regex("""(?:swipe|scroll)\s+(up|down|left|right)""", RegexOption.IGNORE_CASE).find(lower)
+            if (swipeMatch != null) {
+                planned.add(
+                    ChatToolInvocation(
+                        tool = "swipeScreen",
+                        args = buildJsonObject { put("direction", JsonPrimitive(swipeMatch.groupValues[1])) }
+                    )
+                )
+                continue
+            }
+            val hoverClickMatch = Regex("""(?:hover(?:\s+and)?\s+(?:click|tap)|hover\s+(?:over|on)|cursor\s+(?:click|tap|hover)|click\s+(?:on\s+)?(?:the\s+)?|tap\s+(?:on\s+)?(?:the\s+)?)(.+)""", RegexOption.IGNORE_CASE).find(clause)
+            if (hoverClickMatch != null) {
+                val target = hoverClickMatch.groupValues[1].trim().trimEnd('.', '!')
+                val hoverOnly = lower.contains("hover") && !lower.contains("click") && !lower.contains("tap")
+                if (target.isNotBlank()) {
+                    planned.add(
+                        ChatToolInvocation(
+                            tool = "hoverAndClick",
+                            args = buildJsonObject {
+                                put("target", JsonPrimitive(target))
+                                put("hoverOnly", JsonPrimitive(hoverOnly))
+                            }
+                        )
+                    )
+                    continue
+                }
+            }
+
+            // 11. Flashlight / Camera (full capabilities + linked shutter trigger)
             if (GenUiToolRegistry.TOOL_CAMERA in enabledToolIds) {
                 if (lower.contains("flashlight") || lower.contains("torch")) {
                     val state = when {
@@ -862,18 +1007,40 @@ class SequentialToolOrchestrator(
                     )
                     continue
                 }
-                if (lower.contains("camera") || lower.contains("take a photo") || lower.contains("selfie")) {
+                if (lower.contains("camera spec") || lower.contains("camera info") || lower.contains("camera lens") || lower.contains("inspect camera")) {
+                    planned.add(ChatToolInvocation("inspectCamera", JsonObject(emptyMap())))
+                    continue
+                }
+                if (lower.contains("shutter") || lower.contains("snap photo") || lower.contains("capture now")) {
+                    planned.add(ChatToolInvocation("pressCameraShutter", JsonObject(emptyMap())))
+                    continue
+                }
+                if (lower.contains("camera") || lower.contains("take a photo") || lower.contains("take photo") ||
+                    lower.contains("selfie") || lower.contains("record video")
+                ) {
                     val isVideo = lower.contains("video") || lower.contains("record")
                     val facing = if (lower.contains("front") || lower.contains("selfie")) "front" else "back"
+                    val timerMatch = Regex("""(\d+)\s*(?:s|sec|second)""").find(lower)
+                    val timerSec = timerMatch?.groupValues?.get(1)?.toIntOrNull()
                     planned.add(
                         ChatToolInvocation(
-                            tool = if (isVideo) "openVideoCamera" else "openCamera",
+                            tool = when {
+                                isVideo -> "openVideoCamera"
+                                facing == "front" -> "captureSelfie"
+                                else -> "openCamera"
+                            },
                             args = buildJsonObject {
                                 put("mode", JsonPrimitive(if (isVideo) "video" else "photo"))
                                 put("facing", JsonPrimitive(facing))
+                                if (timerSec != null) put("timerSeconds", JsonPrimitive(timerSec))
                             }
                         )
                     )
+                    if ((lower.contains("take a photo") || lower.contains("take photo") || lower.contains("snap")) &&
+                        MoteAccessibilityService.instance != null
+                    ) {
+                        planned.add(ChatToolInvocation("pressCameraShutter", JsonObject(emptyMap())))
+                    }
                     continue
                 }
             }
@@ -1379,8 +1546,8 @@ class SequentialToolOrchestrator(
             "searchinapp", "searchchrome", "openchromeandsearch", "searchyoutube", "chrome_search",
             "searchweb", "websearch", "openurl", "openwebsite", "browse",
             "navigatemaps", "directions", "openmaps",
-            "dialphone", "callnumber", "callphone", "openphone", "dial",
-            "opencamera", "camera", "launchcamera", "takephoto", "openvideocamera",
+            "dialphone", "dial_phone", "callnumber", "callphone", "openphone", "dial", "phonecall", "placecall",
+            "opencamera", "camera", "launchcamera", "takephoto", "captureselfie", "openvideocamera",
             "openrecentapp", "switchlastapp"
         )
     }
@@ -1408,6 +1575,8 @@ class SequentialToolOrchestrator(
         val detail = inv.args["appName"]?.jsonPrimitive?.contentOrNull
             ?: inv.args["phoneNumber"]?.jsonPrimitive?.contentOrNull
             ?: inv.args["targetLabel"]?.jsonPrimitive?.contentOrNull
+            ?: inv.args["target"]?.jsonPrimitive?.contentOrNull
+            ?: inv.args["direction"]?.jsonPrimitive?.contentOrNull
             ?: inv.args["query"]?.jsonPrimitive?.contentOrNull
             ?: inv.args["label"]?.jsonPrimitive?.contentOrNull
             ?: inv.args["title"]?.jsonPrimitive?.contentOrNull
@@ -1420,20 +1589,25 @@ class SequentialToolOrchestrator(
         return when {
             op.contains("clipboard") || op.contains("paste") || op.contains("copy") -> "Android ClipboardManager"
             op.contains("alarm") -> "Android AlarmManager"
-            op.contains("timer") -> "Live Countdown Engine"
-            op.contains("stopwatch") -> "Live Stopwatch Engine"
+            op.contains("timer") || op.contains("countdown") -> "Live Countdown Engine"
+            op.contains("stopwatch") || op.contains("lap") -> "Live Stopwatch Engine"
             op.contains("event") || op.contains("calendar") -> "CalendarContract + Room"
             op.contains("ocr") || op.contains("extract") -> "Gemini Vision OCR"
             op.contains("note") -> "Mote Notes Room DB"
-            op.contains("dial") || op.contains("call") && !op.contains("relay") -> "Android ACTION_DIAL"
+            op.contains("clickcall") || op.contains("presscall") -> "Live Cursor · Dialer Call"
+            op.contains("sms") || op.contains("sendtext") -> "Android ACTION_SENDTO (SMS)"
+            op.contains("dial") || (op.contains("call") && !op.contains("relay")) -> "Android ACTION_DIAL"
             op.contains("relay") || op.contains("speak") || op.contains("tts") -> "Google STT ↔ AI ↔ TTS"
+            op.contains("wifi") || op.contains("network") || op.contains("internet") || op.contains("ping") || op.contains("connectivity") || op.contains("airplane") -> "ConnectivityManager / Wi-Fi"
+            op.contains("hover") || op.contains("cursor") || op.contains("swipe") || op.contains("scroll") || op.contains("inspectscreen") || op.contains("typeinfield") -> "Accessibility Live Cursor"
             op.contains("screenshot") || op.contains("screen") -> "MediaProjection / Display Capture"
             op.contains("share") -> "Android ACTION_SEND"
             op.contains("search") -> "Chrome / App Search + Overlay"
             op.contains("recentapp") || op.contains("usagestats") -> "UsageStatsManager"
             op.contains("app") -> "PackageManager Intent"
             op.contains("flashlight") || op.contains("torch") -> "Camera2 Torch API"
-            op.contains("camera") || op.contains("photo") -> "Android Camera Intent"
+            op.contains("shutter") -> "Live Cursor · Camera Shutter"
+            op.contains("camera") || op.contains("photo") || op.contains("selfie") -> "Android Camera2 / Intent"
             op.contains("maps") -> "Google Maps Navigation"
             op.contains("render_gen_ui") -> "Compose GenUI Runtime"
             else -> "Android Device Engine"

@@ -50,6 +50,8 @@ data class SystemOverlayHudState(
     val allVerified: Boolean = false,
     val activeChain: ToolChainExecutionSnapshot? = null,
     val voiceRelay: LiveVoiceRelayUiState = LiveVoiceRelayUiState(),
+    val isDraggingOverlay: Boolean = false,
+    val activeCursorStatus: String? = null,
     val updatedAtMs: Long = System.currentTimeMillis()
 )
 
@@ -164,10 +166,30 @@ object SystemOverlayStateBus {
         }
     }
 
+    fun setOverlayDragging(dragging: Boolean) {
+        _state.update {
+            it.copy(
+                isDraggingOverlay = dragging,
+                updatedAtMs = System.currentTimeMillis()
+            )
+        }
+    }
+
+    fun publishCursorStatus(status: String?) {
+        _state.update {
+            it.copy(
+                activeCursorStatus = status,
+                activeStatusBanner = status ?: it.activeStatusBanner,
+                updatedAtMs = System.currentTimeMillis()
+            )
+        }
+    }
+
     fun clearBanner() {
         _state.update {
             it.copy(
                 activeStatusBanner = null,
+                activeCursorStatus = null,
                 isExecutingChain = false,
                 updatedAtMs = System.currentTimeMillis()
             )

@@ -157,6 +157,9 @@ class MoteViewModel(
     val savedNotes: StateFlow<List<SavedNoteEntity>> = localModelManager.notesTools.notes
     val voiceRelayState: StateFlow<LiveVoiceRelayUiState> = localModelManager.voiceCallBridge.state
     val systemOverlayState: StateFlow<SystemOverlayHudState> = SystemOverlayStateBus.state
+    val networkStatus: StateFlow<com.mote.app.control.NetworkStatusSnapshot> = localModelManager.networkTools.status
+    val overlayCustomization: StateFlow<com.mote.app.service.OverlayCustomizationConfig> =
+        com.mote.app.service.OverlayCustomizationStore.config
     val capturedScreenshots: StateFlow<Map<String, Bitmap>> = localModelManager.deviceTools.capturedScreenshots
     val isCheckingModelUpdates: StateFlow<Boolean> = localModelManager.isCheckingModelUpdates
     val registeredTools: List<RegisteredToolDescriptor> = localModelManager.toolRegistry.registeredDescriptors()
@@ -241,6 +244,7 @@ class MoteViewModel(
     private var lastChatBot: BotPersona? = null
 
     init {
+        com.mote.app.service.OverlayCustomizationStore.ensureLoaded(localModelManager.appContext)
         viewModelScope.launch {
             repo.seedDefaultBotsIfEmpty().onFailure { err ->
                 _actionError.value = err.localizedMessage ?: "Failed to initialize starter bots."
@@ -566,6 +570,18 @@ class MoteViewModel(
         localModelManager.clockTools.controlStopwatch(action)
     }
 
+    fun startQuickClockTimer(durationSeconds: Int, label: String = "Quick Timer") {
+        val res = localModelManager.clockTools.startTimer(durationSeconds, label)
+        _utilityStatus.value = res.summary
+    }
+
+    fun createQuickRelativeAlarm(offsetMinutes: Int, label: String = "Quick Alarm") {
+        viewModelScope.launch {
+            val res = localModelManager.clockTools.createRelativeAlarm(offsetMinutes, label)
+            _utilityStatus.value = res.summary
+        }
+    }
+
     fun deleteCalendarEvent(eventId: String) =
         localModelManager.calendarTools.deleteEventById(eventId)
 
@@ -691,6 +707,8 @@ class MoteViewModel(
                     appendLine()
                     appendLine(localModelManager.clipboardTools.buildClipboardContextForAi())
                     appendLine()
+                    appendLine(localModelManager.networkTools.buildNetworkContextForAi())
+                    appendLine()
                     appendLine(localModelManager.deviceTools.buildDeviceContextForAi())
                 }.trim()
                 val enabledToolIds = localModelManager.toolRegistry.enabledToolIds(studioPrefs.value)
@@ -792,16 +810,18 @@ class MoteViewModel(
                     ChatGenUiToolProtocol.decodeToolInvocation(rawJson)
                 }
 
-                // If the user explicitly asked for a device action / multi-step chain (e.g. follow-up alarm
-                // or "take a screenshot and share it on WhatsApp") and the LLM emitted zero tool calls,
-                // deterministically plan & execute the chain so the assistant never hallucinates "Done!".
-                val plannedInvocations = if (decodedInvocations.isEmpty() && attachedBitmap == null) {
+                // Filter to registered operations; if the LLM emitted zero supported tools,
+                // deterministically plan & execute the chain so clock/phone/camera/wifi/cursor commands never fail silently.
+                val validDecodedInvocations = decodedInvocations.filter {
+                    localModelManager.toolRegistry.isOperationSupported(it.tool)
+                }
+                val plannedInvocations = if (validDecodedInvocations.isEmpty() && attachedBitmap == null) {
                     localModelManager.toolOrchestrator.planFallbackChainIfUnverified(
                         userPrompt = effectivePrompt,
                         enabledToolIds = enabledToolIds
                     )
                 } else {
-                    decodedInvocations
+                    validDecodedInvocations
                 }
 
                 val liveUiParts = mutableListOf<InChatUiPart>()
@@ -866,6 +886,10 @@ class MoteViewModel(
                         is InChatUiPart.NotesPanel -> firstPart.actionSummary
                         is InChatUiPart.VoiceCallRelayPanel -> firstPart.summary
                         is InChatUiPart.ClipboardPanel -> firstPart.summary
+                        is InChatUiPart.PhoneDialerPanel -> firstPart.summary
+                        is InChatUiPart.NetworkStatusPanel -> firstPart.summary
+                        is InChatUiPart.CameraControlPanel -> firstPart.summary
+                        is InChatUiPart.AppControlPanel -> firstPart.summary
                         is InChatUiPart.GenUiCardPart -> firstPart.spec.title
                         is InChatUiPart.ToolStatusBanner -> firstPart.message
                         null -> ""
@@ -1057,6 +1081,138 @@ class MoteViewModel(
             val res = localModelManager.clipboardTools.pasteToFocusedField(text)
             _utilityStatus.value = res.summary
         }
+    }
+
+    // --- Interactive Quick Controls: Phone, Network, Camera, Live Cursor & Overlay Customization ---
+
+    fun dialNumberQuick(number: String, contactLabel: String? = null) {
+        val res = localModelManager.deviceTools.dialPhoneNumber(number, contactLabel)
+        _utilityStatus.value = res.summary
+    }
+
+    fun clickDialerCallButtonQuick(number: String = "") {
+        viewModelScope.launch {
+            if (number.isNotBlank()) {
+                localModelManager.deviceTools.dialPhoneNumber(number)
+                kotlinx.coroutines.delay(900L)
+            }
+            val res = localModelManager.deviceTools.clickDialerCallButton()
+            _utilityStatus.value = res.summary
+        }
+    }
+
+    fun sendSmsQuick(number: String, body: String = "") {
+        val res = localModelManager.deviceTools.sendSmsMessage(number, body)
+        _utilityStatus.value = res.summary
+    }
+
+    fun refreshNetworkStatusQuick() {
+        val snap = localModelManager.networkTools.refreshStatus()
+        _utilityStatus.value = localModelManager.networkTools.buildSummaryLine(snap)
+    }
+
+    fun openWifiPanelQuick() {
+        val res = localModelManager.networkTools.openWifiPanel()
+        _utilityStatus.value = res.summary
+    }
+
+    fun openInternetPanelQuick() {
+        val res = localModelManager.networkTools.openInternetPanel()
+        _utilityStatus.value = res.summary
+    }
+
+    fun runNetworkPingQuick() {
+        viewModelScope.launch {
+            val res = localModelManager.networkTools.testConnectivityLatency()
+            _utilityStatus.value = res.summary
+        }
+    }
+
+    fun openCameraQuick(mode: String = "photo", facing: String? = null, timerSeconds: Int? = null) {
+        val res = localModelManager.deviceTools.openCamera(mode = mode, facing = facing, timerSeconds = timerSeconds)
+        _utilityStatus.value = res.summary
+    }
+
+    fun toggleFlashlightQuick(enabled: Boolean? = null) {
+        val res = localModelManager.deviceTools.toggleFlashlight(enabled)
+        _utilityStatus.value = res.summary
+    }
+
+    fun triggerCameraShutterQuick() {
+        viewModelScope.launch {
+            val res = localModelManager.deviceTools.triggerCameraShutterWithCursor()
+            _utilityStatus.value = res.summary
+        }
+    }
+
+    fun inspectCameraHardwareQuick() {
+        val res = localModelManager.deviceTools.inspectCameraHardware()
+        _utilityStatus.value = res.summary
+    }
+
+    fun hoverAndClickQuick(target: String, hoverOnly: Boolean = false) {
+        viewModelScope.launch {
+            val a11y = com.mote.app.service.MoteAccessibilityService.instance
+            if (a11y != null) {
+                val res = a11y.hoverAndClickNodeByText(target, hoverOnly = hoverOnly)
+                _utilityStatus.value = res.summary
+            } else {
+                // Visual preview hover on screen even before Accessibility is enabled
+                com.mote.app.service.SystemCursorOverlayManager.animateGlideTo(
+                    context = localModelManager.appContext,
+                    targetX = 480f,
+                    targetY = 640f,
+                    label = "Preview Hover: $target",
+                    useAccessibilityLayer = false,
+                    triggerClickPulse = !hoverOnly
+                )
+                _utilityStatus.value = "Enable Mote Screen Assistant in Tools & Permissions to click '$target' inside other apps."
+            }
+        }
+    }
+
+    fun previewLiveCursorDemo() {
+        viewModelScope.launch {
+            val ctx = localModelManager.appContext
+            val dm = ctx.resources.displayMetrics
+            val useA11y = com.mote.app.service.MoteAccessibilityService.instance != null
+            com.mote.app.service.SystemCursorOverlayManager.animateGlideTo(
+                context = ctx,
+                targetX = dm.widthPixels * 0.5f,
+                targetY = dm.heightPixels * 0.42f,
+                label = "Mote Live Cursor Ready",
+                useAccessibilityLayer = useA11y,
+                triggerClickPulse = true
+            )
+            _utilityStatus.value = if (useA11y) {
+                "Live cursor preview active (Accessibility full-control mode)."
+            } else {
+                "Live cursor preview displayed (enable Accessibility for cross-app clicks)."
+            }
+        }
+    }
+
+    fun swipeScreenQuick(direction: String) {
+        viewModelScope.launch {
+            val a11y = com.mote.app.service.MoteAccessibilityService.instance
+            if (a11y == null) {
+                _utilityStatus.value = "Enable Mote Screen Assistant in Tools & Permissions for gesture swipes."
+            } else {
+                val res = a11y.hoverAndSwipe(direction)
+                _utilityStatus.value = res.summary
+            }
+        }
+    }
+
+    fun updateOverlayCustomization(
+        transform: (com.mote.app.service.OverlayCustomizationConfig) -> com.mote.app.service.OverlayCustomizationConfig
+    ) {
+        com.mote.app.service.OverlayCustomizationStore.update(localModelManager.appContext, transform)
+    }
+
+    fun resetOverlayPosition() {
+        com.mote.app.service.OverlayCustomizationStore.resetPosition(localModelManager.appContext)
+        _utilityStatus.value = "Floating overlay position reset to default."
     }
 
     fun startVoiceCallRelay(targetLabel: String = "Live Voice Relay") {

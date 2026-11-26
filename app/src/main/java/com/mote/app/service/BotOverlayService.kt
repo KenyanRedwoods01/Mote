@@ -40,6 +40,7 @@ class BotOverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModel
     override val viewModelStore: ViewModelStore = ViewModelStore()
 
     private var windowManager: WindowManager? = null
+    private var overlayContainer: DraggableOverlayFrameLayout? = null
     private var overlayView: ComposeView? = null
     private var overlayLayoutParams: WindowManager.LayoutParams? = null
 
@@ -47,6 +48,7 @@ class BotOverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModel
         savedStateController.performAttach()
         savedStateController.performRestore(null)
         super.onCreate()
+        OverlayCustomizationStore.ensureLoaded(this)
         SystemOverlayStateBus.markServiceRunning(true)
         startForegroundNotification()
         attachLottieVoiceOverlay()
@@ -89,19 +91,17 @@ class BotOverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModel
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
         windowManager = wm
 
-        val prefs = getSharedPreferences(OVERLAY_PREFS_NAME, MODE_PRIVATE)
         val metrics = resources.displayMetrics
         val screenWidthPx = metrics.widthPixels
         val screenHeightPx = metrics.heightPixels
         val edgeMarginPx = (8f * metrics.density).roundToInt()
-        val orbApproxPx = (74f * metrics.density).roundToInt()
+        val orbApproxPx = (OverlayCustomizationStore.config.value.orbSizeDp * metrics.density).roundToInt()
 
         val defaultX = (screenWidthPx - orbApproxPx - edgeMarginPx).coerceAtLeast(edgeMarginPx)
         val defaultY = (screenHeightPx * 0.36f).roundToInt()
-        val savedX = prefs.getInt(KEY_OVERLAY_X, defaultX)
-            .coerceIn(edgeMarginPx, (screenWidthPx - orbApproxPx - edgeMarginPx).coerceAtLeast(edgeMarginPx))
-        val savedY = prefs.getInt(KEY_OVERLAY_Y, defaultY)
-            .coerceIn(edgeMarginPx, (screenHeightPx - orbApproxPx - edgeMarginPx).coerceAtLeast(edgeMarginPx))
+        val (rawSavedX, rawSavedY) = OverlayCustomizationStore.loadSavedPosition(this, defaultX, defaultY)
+        val savedX = rawSavedX.coerceIn(0, (screenWidthPx - orbApproxPx).coerceAtLeast(0))
+        val savedY = rawSavedY.coerceIn(0, (screenHeightPx - orbApproxPx).coerceAtLeast(0))
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -118,6 +118,18 @@ class BotOverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModel
         }
         overlayLayoutParams = params
 
+        val container = DraggableOverlayFrameLayout(
+            context = this,
+            windowManager = wm,
+            layoutParamsProvider = { overlayLayoutParams },
+            onDragStateChanged = { dragging ->
+                SystemOverlayStateBus.setOverlayDragging(dragging)
+            },
+            onPositionSettled = { x, y ->
+                OverlayCustomizationStore.savePosition(this, x, y)
+            }
+        )
+
         val view = ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@BotOverlayService)
             setViewTreeViewModelStoreOwner(this@BotOverlayService)
@@ -128,41 +140,15 @@ class BotOverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModel
                 if (!hudState.isAccessibilityOverlayActive && !hudState.isHiddenForPrivacy) {
                     SystemAssistantOverlayContent(
                         hostBadgeLabel = "WM",
-                        onLaunchBot = { bot -> launchOverlayBot(bot) },
-                        onDragStart = {},
-                        onDragDelta = { dx, dy ->
-                            val p = overlayLayoutParams ?: return@SystemAssistantOverlayContent
-                            val liveMetrics = resources.displayMetrics
-                            val maxW = liveMetrics.widthPixels
-                            val maxH = liveMetrics.heightPixels
-                            val viewW = overlayView?.width?.takeIf { it > 0 } ?: orbApproxPx
-                            val viewH = overlayView?.height?.takeIf { it > 0 } ?: orbApproxPx
-                            p.x = (p.x + dx.roundToInt()).coerceIn(
-                                edgeMarginPx,
-                                (maxW - viewW - edgeMarginPx).coerceAtLeast(edgeMarginPx)
-                            )
-                            p.y = (p.y + dy.roundToInt()).coerceIn(
-                                edgeMarginPx,
-                                (maxH - viewH - edgeMarginPx).coerceAtLeast(edgeMarginPx)
-                            )
-                            overlayView?.let { v ->
-                                runCatching { wm.updateViewLayout(v, p) }
-                            }
-                        },
-                        onDragEnd = {
-                            // Keep the user's exact free-placed X/Y coordinates anywhere on screen & persist them
-                            val p = overlayLayoutParams ?: return@SystemAssistantOverlayContent
-                            prefs.edit()
-                                .putInt(KEY_OVERLAY_X, p.x)
-                                .putInt(KEY_OVERLAY_Y, p.y)
-                                .apply()
-                        }
+                        onLaunchBot = { bot -> launchOverlayBot(bot) }
                     )
                 }
             }
         }
+        container.addView(view)
         overlayView = view
-        wm.addView(view, params)
+        overlayContainer = container
+        wm.addView(container, params)
     }
 
     companion object {
@@ -172,8 +158,10 @@ class BotOverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModel
     }
 
     override fun onDestroy() {
+        SystemOverlayStateBus.setOverlayDragging(false)
         SystemOverlayStateBus.markServiceRunning(false)
-        overlayView?.let { runCatching { windowManager?.removeView(it) } }
+        overlayContainer?.let { runCatching { windowManager?.removeView(it) } }
+        overlayContainer = null
         overlayView = null
         overlayLayoutParams = null
         viewModelStore.clear()

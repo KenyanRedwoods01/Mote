@@ -69,7 +69,22 @@ fun InChatUiPartRenderer(
     onStopVoiceRelay: () -> Unit = {},
     onSubmitVoiceRelayText: (String) -> Unit = {},
     onCopyClipboardText: (String) -> Unit = {},
-    onPasteClipboardText: (String) -> Unit = {}
+    onPasteClipboardText: (String) -> Unit = {},
+    onOpenDialer: (number: String, label: String?) -> Unit = { _, _ -> },
+    onClickDialerCallButton: (number: String) -> Unit = {},
+    onSendSms: (number: String, body: String) -> Unit = { _, _ -> },
+    onStartVoiceRelay: (targetLabel: String) -> Unit = {},
+    onOpenWifiPanel: () -> Unit = {},
+    onOpenInternetPanel: () -> Unit = {},
+    onRunNetworkPing: () -> Unit = {},
+    onRefreshNetwork: () -> Unit = {},
+    onOpenCamera: (mode: String, facing: String?) -> Unit = { _, _ -> },
+    onToggleTorch: (enabled: Boolean?) -> Unit = {},
+    onTriggerCameraShutter: () -> Unit = {},
+    onInspectCameraHardware: () -> Unit = {},
+    onHoverAndClickTarget: (target: String) -> Unit = {},
+    onSwipeScreen: (direction: String) -> Unit = {},
+    onPreviewCursor: () -> Unit = {}
 ) {
     when (part) {
         is InChatUiPart.ClockAlarmsPanel -> {
@@ -176,6 +191,41 @@ fun InChatUiPartRenderer(
                 onPasteToScreen = onPasteClipboardText
             )
         }
+        is InChatUiPart.PhoneDialerPanel -> {
+            InChatPhoneDialerWidget(
+                part = part,
+                onOpenDialer = onOpenDialer,
+                onClickCallButton = onClickDialerCallButton,
+                onSendSms = onSendSms,
+                onStartVoiceRelay = onStartVoiceRelay
+            )
+        }
+        is InChatUiPart.NetworkStatusPanel -> {
+            InChatNetworkControlWidget(
+                part = part,
+                onOpenWifiPanel = onOpenWifiPanel,
+                onOpenInternetPanel = onOpenInternetPanel,
+                onRunPing = onRunNetworkPing,
+                onRefreshNetwork = onRefreshNetwork
+            )
+        }
+        is InChatUiPart.CameraControlPanel -> {
+            InChatCameraControlWidget(
+                part = part,
+                onOpenCamera = onOpenCamera,
+                onToggleTorch = onToggleTorch,
+                onTriggerShutter = onTriggerCameraShutter,
+                onInspectHardware = onInspectCameraHardware
+            )
+        }
+        is InChatUiPart.AppControlPanel -> {
+            InChatAppCursorControlWidget(
+                part = part,
+                onHoverAndClickTarget = onHoverAndClickTarget,
+                onSwipeScreen = onSwipeScreen,
+                onPreviewCursor = onPreviewCursor
+            )
+        }
     }
 }
 
@@ -191,8 +241,9 @@ private fun InChatClockAlarmsWidget(
     onDeleteAlarm: (String) -> Unit,
     onSyncAlarmToSystem: (ClockAlarmEntity) -> Unit
 ) {
+    val cardTokens = LocalMoteColors.current
     MoteCard(
-        background = Color.White,
+        background = cardTokens.surface,
         modifier = Modifier
             .border(
                 width = 1.dp,
@@ -318,16 +369,11 @@ private fun InChatClockAlarmsWidget(
                         ) {
                             SmallClockChip("-5m", onClick = { onShiftAlarmMinutes(alarm.id, -5) })
                             SmallClockChip("+5m", onClick = { onShiftAlarmMinutes(alarm.id, 5) })
-                            Text(
-                                text = if (alarm.enabled) "✓ Auto-active in AlarmManager" else "Paused",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (alarm.enabled) LocalNanoEmerald else SlateMuted
-                            )
+                            SmallClockChip("Sync Clock", onClick = { onSyncAlarmToSystem(alarm) })
                             Spacer(Modifier.weight(1f))
                             IconButton(
                                 onClick = { onDeleteAlarm(alarm.id) },
-                                modifier = Modifier.size(34.dp).testTag("inchat_alarm_delete_${alarm.id}")
+                                modifier = Modifier.size(36.dp).testTag("inchat_alarm_delete_${alarm.id}")
                             ) {
                                 Icon(Icons.Outlined.DeleteOutline, contentDescription = "Delete alarm", tint = Color(0xFFDC2626), modifier = Modifier.size(17.dp))
                             }
@@ -599,8 +645,9 @@ private fun InChatCalendarEventsWidget(
     onDeleteEvent: (String) -> Unit,
     onSyncEventToSystem: (CalendarEventEntity) -> Unit
 ) {
+    val calTokens = LocalMoteColors.current
     MoteCard(
-        background = Color.White,
+        background = calTokens.surface,
         modifier = Modifier
             .border(
                 width = 1.dp,

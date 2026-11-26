@@ -118,6 +118,57 @@ sealed interface InChatUiPart {
         val badge: String,
         val success: Boolean = true
     ) : InChatUiPart
+
+    data class PhoneDialerPanel(
+        override val partId: String,
+        val title: String,
+        val summary: String,
+        val phoneNumber: String,
+        val contactLabel: String? = null,
+        val badge: String,
+        val accessibilityReady: Boolean = false,
+        val success: Boolean = true,
+        val detailLines: List<String> = emptyList()
+    ) : InChatUiPart
+
+    data class NetworkStatusPanel(
+        override val partId: String,
+        val title: String,
+        val summary: String,
+        val badge: String,
+        val transportLabel: String,
+        val isConnected: Boolean,
+        val wifiSsid: String? = null,
+        val signalBars: Int = 0,
+        val linkSpeedMbps: Int? = null,
+        val localIpv4: String? = null,
+        val latencyMs: Long? = null,
+        val success: Boolean = true
+    ) : InChatUiPart
+
+    data class CameraControlPanel(
+        override val partId: String,
+        val title: String,
+        val summary: String,
+        val badge: String,
+        val torchEnabled: Boolean = false,
+        val mode: String = "photo",
+        val facing: String = "back",
+        val success: Boolean = true,
+        val detailLines: List<String> = emptyList()
+    ) : InChatUiPart
+
+    data class AppControlPanel(
+        override val partId: String,
+        val title: String,
+        val summary: String,
+        val badge: String,
+        val targetLabel: String? = null,
+        val cursorX: Float? = null,
+        val cursorY: Float? = null,
+        val interactiveElements: List<String> = emptyList(),
+        val success: Boolean = true
+    ) : InChatUiPart
 }
 
 @Serializable
@@ -203,10 +254,11 @@ object ChatGenUiToolProtocol {
         }
 
         if (GenUiToolRegistry.TOOL_CAMERA in enabledToolIds) {
-            appendLine("CAMERA & FLASHLIGHT TOOL (real-time Android Camera & Camera2 Torch):")
-            appendLine("- openCamera: $OPEN_TAG{\"tool\":\"openCamera\",\"args\":{\"mode\":\"photo|video\",\"facing\":\"back|front\"}}$CLOSE_TAG")
-            appendLine("- takePhoto: $OPEN_TAG{\"tool\":\"takePhoto\",\"args\":{\"facing\":\"back|front\"}}$CLOSE_TAG")
-            appendLine("- openVideoCamera: $OPEN_TAG{\"tool\":\"openVideoCamera\",\"args\":{}}$CLOSE_TAG")
+            appendLine("CAMERA & FLASHLIGHT TOOL (real-time Android Camera2, lenses, timer, shutter chaining & torch):")
+            appendLine("- openCamera: $OPEN_TAG{\"tool\":\"openCamera\",\"args\":{\"mode\":\"photo|video|selfie\",\"facing\":\"back|front\",\"timerSeconds\":3}}$CLOSE_TAG")
+            appendLine("- takePhoto / captureSelfie / openVideoCamera: $OPEN_TAG{\"tool\":\"takePhoto\",\"args\":{\"facing\":\"back|front\"}}$CLOSE_TAG")
+            appendLine("- pressCameraShutter (glides live cursor to camera shutter button for chained capture -> OCR): $OPEN_TAG{\"tool\":\"pressCameraShutter\",\"args\":{}}$CLOSE_TAG")
+            appendLine("- inspectCamera (lists rear/front lenses, focal lengths, flash & torch status): $OPEN_TAG{\"tool\":\"inspectCamera\",\"args\":{}}$CLOSE_TAG")
             appendLine("- toggleFlashlight: $OPEN_TAG{\"tool\":\"toggleFlashlight\",\"args\":{\"enabled\":true}}$CLOSE_TAG (omit enabled to toggle)")
             appendLine()
         }
@@ -233,11 +285,27 @@ object ChatGenUiToolProtocol {
         appendLine("- pasteToScreen (pastes clipboard or text into focused input field via Accessibility): $OPEN_TAG{\"tool\":\"pasteToScreen\",\"args\":{\"text\":\"\$lastClipboardText\"}}$CLOSE_TAG")
         appendLine()
 
-        appendLine("PHONE & REAL-TIME VOICE CALL RELAY TOOL (ACTION_DIAL + free Google STT <-> AI <-> Android TTS continuous loop):")
+        appendLine("PHONE & REAL-TIME VOICE CALL RELAY TOOL (ACTION_DIAL + Accessibility Cursor Call-Click + SMS + STT/TTS Relay):")
         appendLine("- dialPhone: $OPEN_TAG{\"tool\":\"dialPhone\",\"args\":{\"phoneNumber\":\"5550199\",\"contactLabel\":\"Support\"}}$CLOSE_TAG")
+        appendLine("- clickCallButton (glides live cursor over the dialer Call button & clicks it via Accessibility): $OPEN_TAG{\"tool\":\"clickCallButton\",\"args\":{}}$CLOSE_TAG")
+        appendLine("- sendSms: $OPEN_TAG{\"tool\":\"sendSms\",\"args\":{\"phoneNumber\":\"5550199\",\"message\":\"On my way!\"}}$CLOSE_TAG")
         appendLine("- startVoiceCallRelay (listens continuously via Google Speech-to-Text and replies aloud via Android Text-to-Speech): $OPEN_TAG{\"tool\":\"startVoiceCallRelay\",\"args\":{\"targetLabel\":\"Call Relay\",\"instruction\":\"Answer politely in 1 sentence\",\"openingGreeting\":\"Hello, Mote AI assistant here.\"}}$CLOSE_TAG")
         appendLine("- speakText: $OPEN_TAG{\"tool\":\"speakText\",\"args\":{\"text\":\"Hello, I will be there in 5 minutes.\"}}$CLOSE_TAG")
         appendLine("- stopVoiceCallRelay: $OPEN_TAG{\"tool\":\"stopVoiceCallRelay\",\"args\":{}}$CLOSE_TAG")
+        appendLine()
+
+        appendLine("WI-FI & NETWORK TOOLS (real Android ConnectivityManager, WifiManager & Settings.Panel):")
+        appendLine("- getNetworkStatus (live Wi-Fi/Cellular/VPN, signal dBm/bars, link speed, IPv4, metered state): $OPEN_TAG{\"tool\":\"getNetworkStatus\",\"args\":{}}$CLOSE_TAG")
+        appendLine("- testConnectivity (live TCP ping latency check): $OPEN_TAG{\"tool\":\"testConnectivity\",\"args\":{}}$CLOSE_TAG")
+        appendLine("- openWifiPanel / openInternetPanel / openNetworkSettings: $OPEN_TAG{\"tool\":\"openWifiPanel\",\"args\":{}}$CLOSE_TAG")
+        appendLine()
+
+        appendLine("APPLICATION CONTROL & REAL-TIME CURSOR HOVER TOOL (Accessibility live animated cursor over any app):")
+        appendLine("- hoverAndClick (visibly glides live floating cursor over UI element and clicks it): $OPEN_TAG{\"tool\":\"hoverAndClick\",\"args\":{\"target\":\"Search\",\"hoverOnly\":false}}$CLOSE_TAG")
+        appendLine("- hoverTapCoordinates (glides cursor to screen x/y or 0..1 normalized coords): $OPEN_TAG{\"tool\":\"hoverTapCoordinates\",\"args\":{\"x\":0.5,\"y\":0.5,\"label\":\"Center\",\"longPress\":false}}$CLOSE_TAG")
+        appendLine("- swipeScreen (scrolls/swipes up, down, left, right with live cursor): $OPEN_TAG{\"tool\":\"swipeScreen\",\"args\":{\"direction\":\"down\"}}$CLOSE_TAG")
+        appendLine("- typeInField (hovers onto input box and enters text): $OPEN_TAG{\"tool\":\"typeInField\",\"args\":{\"target\":\"Search\",\"text\":\"Android AI\"}}$CLOSE_TAG")
+        appendLine("- inspectScreenElements (lists clickable controls currently visible on screen): $OPEN_TAG{\"tool\":\"inspectScreenElements\",\"args\":{}}$CLOSE_TAG")
         appendLine()
 
         if (GenUiToolRegistry.TOOL_APP_LAUNCHER in enabledToolIds) {
@@ -358,6 +426,10 @@ object ChatGenUiToolProtocol {
                         "Clearing system clipboard..."
                     partialJson.contains("pasteToScreen", true) ->
                         "Pasting clipboard into focused field..."
+                    partialJson.contains("Wifi", true) || partialJson.contains("Network", true) || partialJson.contains("Connectivity", true) ->
+                        "Checking live Wi-Fi & Network state..."
+                    partialJson.contains("hover", true) || partialJson.contains("swipe", true) || partialJson.contains("inspectScreen", true) || partialJson.contains("clickCall", true) ->
+                        "Gliding real-time Mote cursor..."
                     partialJson.contains("render_gen_ui", true) ->
                         "Streaming Generative UI widget..."
                     else -> "Executing live tool..."

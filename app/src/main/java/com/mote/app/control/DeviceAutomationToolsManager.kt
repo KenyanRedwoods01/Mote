@@ -110,8 +110,20 @@ class DeviceAutomationToolsManager(context: Context) {
     // 1. CAMERA & FLASHLIGHT TOOLS
     // -------------------------------------------------------------------------
 
-    fun openCamera(mode: String = "photo", facing: String? = null): DeviceToolOutcome {
-        val isVideo = mode.lowercase(Locale.US).contains("video") || mode.lowercase(Locale.US).contains("record")
+    fun isTorchEnabled(): Boolean = torchEnabledState
+
+    fun openCamera(
+        mode: String = "photo",
+        facing: String? = null,
+        timerSeconds: Int? = null
+    ): DeviceToolOutcome {
+        val normMode = mode.lowercase(Locale.US)
+        val isVideo = normMode.contains("video") || normMode.contains("record")
+        val resolvedFacing = when {
+            !facing.isNullOrBlank() -> facing
+            normMode.contains("selfie") || normMode.contains("front") -> "front"
+            else -> null
+        }
         val action = if (isVideo) {
             MediaStore.INTENT_ACTION_VIDEO_CAMERA
         } else {
@@ -119,9 +131,10 @@ class DeviceAutomationToolsManager(context: Context) {
         }
         val intent = Intent(action).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            when (facing?.lowercase(Locale.US)) {
+            when (resolvedFacing?.lowercase(Locale.US)) {
                 "front", "selfie" -> {
                     putExtra("android.intent.extras.CAMERA_FACING", 1)
+                    putExtra("android.intent.extras.LENS_FACING_FRONT", 1)
                     putExtra("android.intent.extra.USE_FRONT_CAMERA", true)
                 }
                 "back", "rear" -> {
@@ -129,19 +142,33 @@ class DeviceAutomationToolsManager(context: Context) {
                     putExtra("android.intent.extra.USE_FRONT_CAMERA", false)
                 }
             }
+            if (timerSeconds != null && timerSeconds in 1..30) {
+                putExtra("android.intent.extra.TIMER_DURATION_SECONDS", timerSeconds)
+            }
         }
         return try {
             appContext.startActivity(intent)
-            val facingNote = facing?.takeIf { it.isNotBlank() }?.let { " ($it lens)" }.orEmpty()
+            val overlayActive = SystemOverlayStateBus.ensureSystemOverlayRunning(appContext)
+            val facingNote = resolvedFacing?.takeIf { it.isNotBlank() }?.let { " ($it lens)" }.orEmpty()
+            val timerNote = timerSeconds?.takeIf { it in 1..30 }?.let { " · ${it}s timer" }.orEmpty()
+            SystemOverlayStateBus.publishAppContext(
+                appLabel = "Camera",
+                statusBanner = if (isVideo) "Video Camera$facingNote$timerNote" else "Camera$facingNote$timerNote"
+            )
             DeviceToolOutcome(
                 success = true,
                 title = if (isVideo) "Video Camera Launched" else "Camera Launched",
                 summary = if (isVideo) {
-                    "Opened Android Video Camera$facingNote in real time."
+                    "Opened Android Video Camera$facingNote$timerNote in real time."
                 } else {
-                    "Opened Android Camera$facingNote ready to capture."
+                    "Opened Android Camera$facingNote$timerNote ready to capture."
                 },
-                badge = "CAMERA LIVE"
+                badge = if (isVideo) "VIDEO LIVE" else "CAMERA LIVE",
+                detailLines = listOfNotNull(
+                    "Mode: ${mode.ifBlank { "photo" }}$facingNote$timerNote",
+                    "Flashlight torch: ${if (torchEnabledState) "ON" else "OFF"}",
+                    if (overlayActive) "Floating Mote overlay active over Camera for linked shutter/OCR chains" else null
+                )
             )
         } catch (_: Exception) {
             try {
@@ -164,6 +191,64 @@ class DeviceAutomationToolsManager(context: Context) {
                 )
             }
         }
+    }
+
+    fun inspectCameraHardware(): DeviceToolOutcome {
+        val cm = appContext.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
+            ?: return DeviceToolOutcome(false, "Camera Hardware Unavailable", "CameraManager service not available.", "UNAVAILABLE")
+        return try {
+            val ids = cm.cameraIdList
+            var backCount = 0
+            var frontCount = 0
+            var flashUnits = 0
+            val details = mutableListOf<String>()
+            ids.forEach { id ->
+                val chars = cm.getCameraCharacteristics(id)
+                val facing = when (chars.get(CameraCharacteristics.LENS_FACING)) {
+                    CameraCharacteristics.LENS_FACING_BACK -> { backCount++; "Rear" }
+                    CameraCharacteristics.LENS_FACING_FRONT -> { frontCount++; "Front" }
+                    else -> "External"
+                }
+                val hasFlash = chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+                if (hasFlash) flashUnits++
+                val focalLengths = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                val focalStr = focalLengths?.firstOrNull()?.let { String.format(Locale.US, "%.1fmm", it) } ?: "std"
+                details += "Camera #$id: $facing · $focalStr · Flash:${if (hasFlash) "Yes" else "No"}"
+            }
+            details += "Torch State: ${if (torchEnabledState) "ON" else "OFF"}"
+            DeviceToolOutcome(
+                success = true,
+                title = "Camera Hardware (${ids.size} Lenses)",
+                summary = "Detected ${ids.size} camera sensor(s): $backCount rear, $frontCount front, $flashUnits flash unit(s). Torch is ${if (torchEnabledState) "ON" else "OFF"}.",
+                badge = "CAMERA INFO",
+                detailLines = details.take(6)
+            )
+        } catch (e: Exception) {
+            DeviceToolOutcome(false, "Camera Inspection Error", e.localizedMessage ?: "Failed to query Camera2 hardware.", "ERROR")
+        }
+    }
+
+    suspend fun triggerCameraShutterWithCursor(): DeviceToolOutcome {
+        val a11y = MoteAccessibilityService.instance
+            ?: return DeviceToolOutcome(
+                success = false,
+                title = "Accessibility Needed for Auto-Shutter",
+                summary = "Enable Mote Screen Assistant in Tools & Permissions so the live cursor can press the Camera shutter automatically.",
+                badge = "NEEDS ACCESSIBILITY"
+            )
+        val result = a11y.hoverAndClickCameraShutter()
+        return DeviceToolOutcome(
+            success = result.success,
+            title = if (result.success) "Camera Shutter Pressed" else "Shutter Click Blocked",
+            summary = result.detail,
+            badge = if (result.success) "CAPTURED" else "FAILED",
+            detailLines = listOfNotNull(
+                result.matchedLabel?.let { "Control: $it" },
+                if (result.targetX != null && result.targetY != null) {
+                    "Cursor coordinates: (${result.targetX.toInt()}, ${result.targetY.toInt()})"
+                } else null
+            )
+        )
     }
 
     fun toggleFlashlight(requestedState: Boolean?): DeviceToolOutcome {
@@ -1103,13 +1188,16 @@ class DeviceAutomationToolsManager(context: Context) {
     }
 
     /**
-     * Play-compliant phone dialer launch using `ACTION_DIAL` (zero restricted CALL_PHONE permission),
-     * opening the Android Phone app pre-filled with the requested number and activating the animated
-     * Siri-like floating overlay ready for live STT <-> AI <-> TTS voice relay.
+     * Play-compliant phone dialer launch using `ACTION_DIAL` + `Uri.fromParts("tel", ...)`
+     * so international `+`, `*`, and `#` codes never truncate as URL fragments.
      */
     fun dialPhoneNumber(phoneNumber: String, contactLabel: String? = null): DeviceToolOutcome {
-        val cleaned = phoneNumber.replace(Regex("[^0-9+*#]"), "").trim()
-        val uri = if (cleaned.isNotBlank()) Uri.parse("tel:$cleaned") else Uri.parse("tel:")
+        val cleaned = phoneNumber.replace(Regex("[^0-9+*#,]"), "").trim()
+        val uri = if (cleaned.isNotBlank()) {
+            Uri.fromParts("tel", cleaned, null)
+        } else {
+            Uri.parse("tel:")
+        }
         val intent = Intent(Intent.ACTION_DIAL, uri).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
@@ -1122,18 +1210,24 @@ class DeviceAutomationToolsManager(context: Context) {
                 appLabel = "Phone",
                 statusBanner = "Phone Dialer · $labelText"
             )
+            val a11yReady = MoteAccessibilityService.instance != null
             DeviceToolOutcome(
                 success = true,
                 title = if (cleaned.isNotBlank()) "Dialing $labelText" else "Opened Phone Dialer",
                 summary = if (cleaned.isNotBlank()) {
-                    "Opened Android Phone pre-filled with $labelText (ACTION_DIAL). Tap Call and put on speakerphone for live Mote voice relay."
+                    if (a11yReady) {
+                        "Opened Android Phone pre-filled with $labelText. Use Auto-Click Call (Cursor) or tap Call directly."
+                    } else {
+                        "Opened Android Phone pre-filled with $labelText (Play-compliant ACTION_DIAL). Tap the green Call button to place the call, or enable Mote Accessibility for hands-free cursor click."
+                    }
                 } else {
                     "Opened Android Phone dialer ready for your call."
                 },
                 badge = "PHONE DIALER",
                 detailLines = listOfNotNull(
                     if (cleaned.isNotBlank()) "Number: $cleaned" else null,
-                    "Play-compliant ACTION_DIAL intent",
+                    "Play-compliant ACTION_DIAL (Uri.fromParts)",
+                    if (a11yReady) "Accessibility Live Cursor ready to click Call button" else "Enable Mote Screen Assistant for auto Call-button click",
                     if (overlayActive) "Siri-style Mote overlay floating over Phone" else null
                 )
             )
@@ -1142,6 +1236,73 @@ class DeviceAutomationToolsManager(context: Context) {
                 success = false,
                 title = "Phone Dialer Unavailable",
                 summary = "No phone dialer app responded on this device (${e.localizedMessage ?: "missing dialer"}).",
+                badge = "ERROR"
+            )
+        }
+    }
+
+    /**
+     * Glides the real-time Mote floating cursor onto the Phone dialer's Call button and clicks it
+     * via AccessibilityService without requiring restricted CALL_PHONE permissions.
+     */
+    suspend fun clickDialerCallButton(): DeviceToolOutcome {
+        val a11y = MoteAccessibilityService.instance
+            ?: return DeviceToolOutcome(
+                success = false,
+                title = "Enable Accessibility for Auto-Call Click",
+                summary = "Mote Screen Assistant is not active yet. Enable it in Tools & Permissions so the live cursor can click the green Call button inside the dialer, or tap Call manually.",
+                badge = "NEEDS ACCESSIBILITY"
+            )
+        val result = a11y.hoverAndClickDialerCallButton()
+        return DeviceToolOutcome(
+            success = result.success,
+            title = if (result.success) "Call Action Clicked" else "Call Button Not Clicked",
+            summary = result.detail,
+            badge = if (result.success) "CALL CLICKED" else "DIAL READY",
+            detailLines = listOfNotNull(
+                result.matchedLabel?.let { "Target control: $it" },
+                if (result.targetX != null && result.targetY != null) {
+                    "Cursor click at (${result.targetX.toInt()}, ${result.targetY.toInt()})"
+                } else null
+            )
+        )
+    }
+
+    /**
+     * Play-compliant SMS composer launch using `ACTION_SENDTO` (`smsto:`).
+     */
+    fun sendSmsMessage(phoneNumber: String, message: String = ""): DeviceToolOutcome {
+        val cleaned = phoneNumber.replace(Regex("[^0-9+*#]"), "").trim()
+        val uri = Uri.fromParts("smsto", cleaned, null)
+        val intent = Intent(Intent.ACTION_SENDTO, uri).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (message.isNotBlank()) {
+                putExtra("sms_body", message)
+            }
+        }
+        return try {
+            appContext.startActivity(intent)
+            SystemOverlayStateBus.ensureSystemOverlayRunning(appContext)
+            SystemOverlayStateBus.publishAppContext("Messages", "SMS to ${cleaned.ifBlank { "contact" }}")
+            DeviceToolOutcome(
+                success = true,
+                title = if (cleaned.isNotBlank()) "Opened SMS to $cleaned" else "Opened Messages",
+                summary = if (message.isNotBlank()) {
+                    "Prepared SMS to ${cleaned.ifBlank { "recipient" }}: \"${message.take(80)}\"."
+                } else {
+                    "Opened Android Messages for ${cleaned.ifBlank { "your recipient" }}."
+                },
+                badge = "SMS READY",
+                detailLines = listOfNotNull(
+                    if (cleaned.isNotBlank()) "Recipient: $cleaned" else null,
+                    if (message.isNotBlank()) "Draft: ${message.take(100)}" else null
+                )
+            )
+        } catch (e: Exception) {
+            DeviceToolOutcome(
+                success = false,
+                title = "Messaging App Unavailable",
+                summary = e.localizedMessage ?: "No SMS app available on this device.",
                 badge = "ERROR"
             )
         }

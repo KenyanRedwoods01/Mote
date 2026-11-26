@@ -46,6 +46,7 @@ class AccessibilityFloatingWindowManager(
     override val viewModelStore: ViewModelStore = ViewModelStore()
 
     private var windowManager: WindowManager? = null
+    private var overlayContainer: DraggableOverlayFrameLayout? = null
     private var composeView: ComposeView? = null
     private var overlayWindowParams: WindowManager.LayoutParams? = null
     private var initializedLifecycle = false
@@ -57,8 +58,9 @@ class AccessibilityFloatingWindowManager(
             mainHandler.post { attachAndShow() }
             return true
         }
-        if (isAttached && composeView != null) {
-            composeView?.visibility = if (hiddenForPrivacy) View.GONE else View.VISIBLE
+        OverlayCustomizationStore.ensureLoaded(service)
+        if (isAttached && overlayContainer != null) {
+            overlayContainer?.visibility = if (hiddenForPrivacy) View.GONE else View.VISIBLE
             SystemOverlayStateBus.markAccessibilityOverlayRunning(true)
             return true
         }
@@ -67,22 +69,17 @@ class AccessibilityFloatingWindowManager(
             val wm = service.getSystemService(AccessibilityService.WINDOW_SERVICE) as WindowManager
             windowManager = wm
 
-            val prefs = service.getSharedPreferences(
-                BotOverlayService.OVERLAY_PREFS_NAME,
-                AccessibilityService.MODE_PRIVATE
-            )
             val metrics = service.resources.displayMetrics
             val screenWidthPx = metrics.widthPixels
             val screenHeightPx = metrics.heightPixels
             val edgeMarginPx = (8f * metrics.density).roundToInt()
-            val orbApproxPx = (74f * metrics.density).roundToInt()
+            val orbApproxPx = (OverlayCustomizationStore.config.value.orbSizeDp * metrics.density).roundToInt()
 
             val defaultX = (screenWidthPx - orbApproxPx - edgeMarginPx).coerceAtLeast(edgeMarginPx)
             val defaultY = (screenHeightPx * 0.34f).roundToInt()
-            val savedX = prefs.getInt(BotOverlayService.KEY_OVERLAY_X, defaultX)
-                .coerceIn(edgeMarginPx, (screenWidthPx - orbApproxPx - edgeMarginPx).coerceAtLeast(edgeMarginPx))
-            val savedY = prefs.getInt(BotOverlayService.KEY_OVERLAY_Y, defaultY)
-                .coerceIn(edgeMarginPx, (screenHeightPx - orbApproxPx - edgeMarginPx).coerceAtLeast(edgeMarginPx))
+            val (rawSavedX, rawSavedY) = OverlayCustomizationStore.loadSavedPosition(service, defaultX, defaultY)
+            val savedX = rawSavedX.coerceIn(0, (screenWidthPx - orbApproxPx).coerceAtLeast(0))
+            val savedY = rawSavedY.coerceIn(0, (screenHeightPx - orbApproxPx).coerceAtLeast(0))
 
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -99,48 +96,35 @@ class AccessibilityFloatingWindowManager(
             }
             overlayWindowParams = params
 
+            val container = DraggableOverlayFrameLayout(
+                context = service,
+                windowManager = wm,
+                layoutParamsProvider = { overlayWindowParams },
+                onDragStateChanged = { dragging ->
+                    SystemOverlayStateBus.setOverlayDragging(dragging)
+                },
+                onPositionSettled = { x, y ->
+                    OverlayCustomizationStore.savePosition(service, x, y)
+                }
+            ).apply {
+                visibility = if (hiddenForPrivacy) View.GONE else View.VISIBLE
+            }
+
             val view = ComposeView(service).apply {
                 setViewTreeLifecycleOwner(this@AccessibilityFloatingWindowManager)
                 setViewTreeViewModelStoreOwner(this@AccessibilityFloatingWindowManager)
                 setViewTreeSavedStateRegistryOwner(this@AccessibilityFloatingWindowManager)
-                visibility = if (hiddenForPrivacy) View.GONE else View.VISIBLE
                 setContent {
                     SystemAssistantOverlayContent(
                         hostBadgeLabel = "A11Y",
-                        onLaunchBot = { bot -> launchBotOverlaySheet(bot) },
-                        onDragStart = {},
-                        onDragDelta = { dx, dy ->
-                            val p = overlayWindowParams ?: return@SystemAssistantOverlayContent
-                            val liveMetrics = service.resources.displayMetrics
-                            val maxW = liveMetrics.widthPixels
-                            val maxH = liveMetrics.heightPixels
-                            val viewW = composeView?.width?.takeIf { it > 0 } ?: orbApproxPx
-                            val viewH = composeView?.height?.takeIf { it > 0 } ?: orbApproxPx
-                            p.x = (p.x + dx.roundToInt()).coerceIn(
-                                edgeMarginPx,
-                                (maxW - viewW - edgeMarginPx).coerceAtLeast(edgeMarginPx)
-                            )
-                            p.y = (p.y + dy.roundToInt()).coerceIn(
-                                edgeMarginPx,
-                                (maxH - viewH - edgeMarginPx).coerceAtLeast(edgeMarginPx)
-                            )
-                            composeView?.let { v ->
-                                runCatching { wm.updateViewLayout(v, p) }
-                            }
-                        },
-                        onDragEnd = {
-                            // Keep the user's exact free-placed X/Y coordinates anywhere on screen & persist them
-                            val p = overlayWindowParams ?: return@SystemAssistantOverlayContent
-                            prefs.edit()
-                                .putInt(BotOverlayService.KEY_OVERLAY_X, p.x)
-                                .putInt(BotOverlayService.KEY_OVERLAY_Y, p.y)
-                                .apply()
-                        }
+                        onLaunchBot = { bot -> launchBotOverlaySheet(bot) }
                     )
                 }
             }
 
-            wm.addView(view, params)
+            container.addView(view)
+            wm.addView(container, params)
+            overlayContainer = container
             composeView = view
             isAttached = true
             SystemOverlayStateBus.markAccessibilityOverlayRunning(true)
@@ -154,25 +138,27 @@ class AccessibilityFloatingWindowManager(
     fun setPrivacyHidden(hidden: Boolean) {
         hiddenForPrivacy = hidden
         mainHandler.post {
-            composeView?.visibility = if (hidden) View.GONE else View.VISIBLE
+            overlayContainer?.visibility = if (hidden) View.GONE else View.VISIBLE
         }
     }
 
     fun hide() {
         mainHandler.post {
-            composeView?.visibility = View.GONE
+            overlayContainer?.visibility = View.GONE
             SystemOverlayStateBus.markAccessibilityOverlayRunning(false)
         }
     }
 
     fun detach() {
         val cleanup = Runnable {
-            composeView?.let { v ->
+            overlayContainer?.let { v ->
                 runCatching { windowManager?.removeView(v) }
             }
+            overlayContainer = null
             composeView = null
             overlayWindowParams = null
             isAttached = false
+            SystemOverlayStateBus.setOverlayDragging(false)
             SystemOverlayStateBus.markAccessibilityOverlayRunning(false)
             if (initializedLifecycle && lifecycleRegistry.currentState != Lifecycle.State.DESTROYED) {
                 runCatching { lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE) }

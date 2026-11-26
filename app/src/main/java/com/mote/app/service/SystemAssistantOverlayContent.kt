@@ -16,7 +16,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -62,7 +61,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -139,14 +137,16 @@ internal val systemOverlayBots = listOf(
 @Composable
 internal fun SystemAssistantOverlayContent(
     hostBadgeLabel: String,
-    onLaunchBot: (OverlayQuickBot) -> Unit,
-    onDragStart: () -> Unit,
-    onDragDelta: (Float, Float) -> Unit,
-    onDragEnd: () -> Unit
+    onLaunchBot: (OverlayQuickBot) -> Unit
 ) {
     val hudState by SystemOverlayStateBus.state.collectAsState()
-    var isDragging by remember { mutableStateOf(false) }
+    val customConfig by OverlayCustomizationStore.config.collectAsState()
+    val isDragging = hudState.isDraggingOverlay
     var dockExpanded by remember { mutableStateOf(false) }
+
+    if (isDragging && dockExpanded) {
+        dockExpanded = false
+    }
 
     val voiceRelay = hudState.voiceRelay
     val isSiriActive = hudState.isExecutingChain || voiceRelay.isActive || dockExpanded
@@ -162,6 +162,7 @@ internal fun SystemAssistantOverlayContent(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier
             .padding(4.dp)
+            .graphicsLayer { alpha = if (isDragging) 1f else customConfig.orbOpacity }
             .testTag("system_overlay_root")
     ) {
         // 1. Live Lottie Voice Call Relay Mini-Card floating over Phone / any external app
@@ -181,7 +182,7 @@ internal fun SystemAssistantOverlayContent(
         // 2. Live Tool Chain Progress & Verification HUD Pill over Chrome / YouTube / any app
         val bannerText = hudState.activeStatusBanner
         AnimatedVisibility(
-            visible = !bannerText.isNullOrBlank() && !voiceRelay.isActive && !isDragging,
+            visible = customConfig.showFloatingStatusPill && !bannerText.isNullOrBlank() && !voiceRelay.isActive && !isDragging,
             enter = fadeIn() + expandVertically(),
             exit = fadeOut() + shrinkVertically()
         ) {
@@ -190,17 +191,7 @@ internal fun SystemAssistantOverlayContent(
                 isExecuting = hudState.isExecutingChain,
                 allVerified = hudState.allVerified,
                 onTap = { onLaunchBot(systemOverlayBots.first()) },
-                onDismiss = { SystemOverlayStateBus.clearBanner() },
-                onDragStart = {
-                    isDragging = true
-                    dockExpanded = false
-                    onDragStart()
-                },
-                onDragDelta = onDragDelta,
-                onDragEnd = {
-                    isDragging = false
-                    onDragEnd()
-                }
+                onDismiss = { SystemOverlayStateBus.clearBanner() }
             )
         }
 
@@ -218,19 +209,10 @@ internal fun SystemAssistantOverlayContent(
                     hostBadgeLabel = hostBadgeLabel,
                     rmsLevel = liveRms,
                     isExecuting = hudState.isExecutingChain,
+                    theme = customConfig.orbTheme,
                     onTapVoice = {
                         dockExpanded = false
                         onLaunchBot(systemOverlayBots.first { it.id == "voice_relay" })
-                    },
-                    onDragStart = {
-                        isDragging = true
-                        dockExpanded = false
-                        onDragStart()
-                    },
-                    onDragDelta = onDragDelta,
-                    onDragEnd = {
-                        isDragging = false
-                        onDragEnd()
                     }
                 )
                 systemOverlayBots.forEach { bot ->
@@ -269,9 +251,11 @@ internal fun SystemAssistantOverlayContent(
             }
         }
 
-        // 4. Lottie-Powered Siri-Style Animated Voice Orb (free-position draggable anywhere on screen)
+        // 4. Lottie-Powered Siri-Style Animated Voice Orb (hardware-smooth free-position drag)
         LottieSystemVoiceOrb(
             hostBadgeLabel = hostBadgeLabel,
+            orbTheme = customConfig.orbTheme,
+            orbSizeDp = customConfig.orbSizeDp,
             isActive = isSiriActive,
             isDragging = isDragging,
             isExecuting = hudState.isExecutingChain,
@@ -284,16 +268,6 @@ internal fun SystemAssistantOverlayContent(
                 } else {
                     dockExpanded = true
                 }
-            },
-            onDragStart = {
-                isDragging = true
-                dockExpanded = false
-                onDragStart()
-            },
-            onDragDelta = onDragDelta,
-            onDragEnd = {
-                isDragging = false
-                onDragEnd()
             }
         )
     }
@@ -304,10 +278,8 @@ private fun SystemOverlayLottieVoiceBar(
     hostBadgeLabel: String,
     rmsLevel: Float,
     isExecuting: Boolean,
-    onTapVoice: () -> Unit,
-    onDragStart: () -> Unit = {},
-    onDragDelta: (Float, Float) -> Unit = { _, _ -> },
-    onDragEnd: () -> Unit = {}
+    theme: OverlayOrbTheme,
+    onTapVoice: () -> Unit
 ) {
     val composition by rememberLottieComposition(
         LottieCompositionSpec.RawRes(R.raw.voice_waveform_lottie)
@@ -319,6 +291,7 @@ private fun SystemOverlayLottieVoiceBar(
         iterations = LottieConstants.IterateForever,
         speed = speed
     )
+    val borderAccent = Color(theme.primaryHex)
 
     Row(
         modifier = Modifier
@@ -326,18 +299,7 @@ private fun SystemOverlayLottieVoiceBar(
             .shadow(12.dp, RoundedCornerShape(16.dp))
             .clip(RoundedCornerShape(16.dp))
             .background(Color(0xF50B1024))
-            .border(1.2.dp, Color(0xFF38BDF8), RoundedCornerShape(16.dp))
-            .pointerInput(Unit) {
-                detectDragGestures(
-                    onDragStart = { onDragStart() },
-                    onDragEnd = { onDragEnd() },
-                    onDragCancel = { onDragEnd() },
-                    onDrag = { change, dragAmount ->
-                        change.consume()
-                        onDragDelta(dragAmount.x, dragAmount.y)
-                    }
-                )
-            }
+            .border(1.2.dp, borderAccent, RoundedCornerShape(16.dp))
             .clickable(onClick = onTapVoice)
             .padding(horizontal = 10.dp, vertical = 7.dp)
             .testTag("system_overlay_lottie_voice_bar"),
@@ -361,8 +323,8 @@ private fun SystemOverlayLottieVoiceBar(
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = "$hostBadgeLabel · Drag to move · Tap to speak",
-                color = Color(0xFF7DD3FC),
+                text = "$hostBadgeLabel · Drag anywhere · Tap to speak",
+                color = borderAccent,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
@@ -375,16 +337,19 @@ private fun SystemOverlayLottieVoiceBar(
 @Composable
 private fun LottieSystemVoiceOrb(
     hostBadgeLabel: String,
+    orbTheme: OverlayOrbTheme,
+    orbSizeDp: Int,
     isActive: Boolean,
     isDragging: Boolean,
     isExecuting: Boolean,
     allVerified: Boolean,
     rmsLevel: Float,
-    onTap: () -> Unit,
-    onDragStart: () -> Unit,
-    onDragDelta: (Float, Float) -> Unit,
-    onDragEnd: () -> Unit
+    onTap: () -> Unit
 ) {
+    val primaryColor = Color(orbTheme.primaryHex)
+    val secondaryColor = Color(orbTheme.secondaryHex)
+    val accentColor = Color(orbTheme.accentHex)
+
     val infinite = rememberInfiniteTransition(label = "siriOverlayOrb")
     val spinAngle by infinite.animateFloat(
         initialValue = 0f,
@@ -430,29 +395,21 @@ private fun LottieSystemVoiceOrb(
         speed = lottieSpeed
     )
 
+    val outerSize = orbSizeDp.coerceIn(56, 88).dp
+    val canvasSize = (orbSizeDp - 4).coerceAtLeast(52).dp
+
     Box(
         modifier = Modifier
-            .size(72.dp)
+            .size(outerSize)
             .graphicsLayer {
                 scaleX = dragScale
                 scaleY = dragScale
-            }
-            .pointerInput(Unit) {
-                detectDragGestures(
-                    onDragStart = { onDragStart() },
-                    onDragEnd = { onDragEnd() },
-                    onDragCancel = { onDragEnd() },
-                    onDrag = { change, dragAmount ->
-                        change.consume()
-                        onDragDelta(dragAmount.x, dragAmount.y)
-                    }
-                )
             }
             .clickable(onClick = onTap)
             .testTag("system_overlay_lottie_orb"),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.size(68.dp)) {
+        Canvas(modifier = Modifier.size(canvasSize)) {
             val center = Offset(size.width / 2f, size.height / 2f)
             val baseRadius = size.minDimension * 0.36f
             val pulseRadius = baseRadius + (size.minDimension * 0.12f * smoothRms)
@@ -461,11 +418,11 @@ private fun LottieSystemVoiceOrb(
                 brush = Brush.radialGradient(
                     colors = listOf(
                         when {
-                            isDragging -> Color(0xAA38BDF8)
+                            isDragging -> primaryColor.copy(alpha = 0.72f)
                             allVerified -> Color(0x6610B981)
-                            else -> Color(0x7738BDF8)
+                            else -> primaryColor.copy(alpha = 0.46f)
                         },
-                        Color(0x558B5CF6),
+                        secondaryColor.copy(alpha = 0.34f),
                         Color.Transparent
                     ),
                     center = center,
@@ -485,12 +442,10 @@ private fun LottieSystemVoiceOrb(
                 drawCircle(
                     brush = Brush.sweepGradient(
                         colors = listOf(
-                            Color(0xFF06B6D4),
-                            Color(0xFF3B82F6),
-                            Color(0xFF8B5CF6),
-                            Color(0xFFEC4899),
-                            Color(0xFF10B981),
-                            Color(0xFF06B6D4)
+                            primaryColor,
+                            secondaryColor,
+                            accentColor,
+                            primaryColor
                         ),
                         center = center
                     ),
@@ -508,7 +463,7 @@ private fun LottieSystemVoiceOrb(
             CircularProgressIndicator(
                 modifier = Modifier.size(22.dp),
                 strokeWidth = 2.4.dp,
-                color = Color(0xFF38BDF8)
+                color = primaryColor
             )
         } else if (allVerified && !isDragging) {
             Icon(
@@ -522,7 +477,7 @@ private fun LottieSystemVoiceOrb(
                 composition = lottieComposition,
                 progress = { lottieProgress },
                 modifier = Modifier
-                    .size(34.dp)
+                    .size((orbSizeDp * 0.46f).dp)
                     .graphicsLayer {
                         val s = (0.85f + smoothRms * 0.35f).coerceIn(0.85f, 1.25f)
                         scaleX = s
@@ -536,13 +491,13 @@ private fun LottieSystemVoiceOrb(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .clip(RoundedCornerShape(999.dp))
-                .background(if (isDragging) Color(0xFF0284C7) else Color(0xE60F172A))
-                .border(0.75.dp, Color(0xFF38BDF8).copy(alpha = 0.8f), RoundedCornerShape(999.dp))
+                .background(if (isDragging) primaryColor else Color(0xE60F172A))
+                .border(0.75.dp, primaryColor.copy(alpha = 0.85f), RoundedCornerShape(999.dp))
                 .padding(horizontal = 5.dp, vertical = 1.dp)
         ) {
             Text(
                 text = if (isDragging) "MOVE" else hostBadgeLabel,
-                color = if (isDragging) Color.White else Color(0xFF7DD3FC),
+                color = if (isDragging) Color(0xFF0F172A) else primaryColor,
                 fontSize = 7.5.sp,
                 fontWeight = FontWeight.ExtraBold
             )
@@ -556,10 +511,7 @@ private fun SystemChainStatusHudPill(
     isExecuting: Boolean,
     allVerified: Boolean,
     onTap: () -> Unit,
-    onDismiss: () -> Unit,
-    onDragStart: () -> Unit = {},
-    onDragDelta: (Float, Float) -> Unit = { _, _ -> },
-    onDragEnd: () -> Unit = {}
+    onDismiss: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -576,17 +528,6 @@ private fun SystemChainStatusHudPill(
                 },
                 shape = RoundedCornerShape(16.dp)
             )
-            .pointerInput(Unit) {
-                detectDragGestures(
-                    onDragStart = { onDragStart() },
-                    onDragEnd = { onDragEnd() },
-                    onDragCancel = { onDragEnd() },
-                    onDrag = { change, dragAmount ->
-                        change.consume()
-                        onDragDelta(dragAmount.x, dragAmount.y)
-                    }
-                )
-            }
             .clickable(onClick = onTap)
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,

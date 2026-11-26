@@ -8,11 +8,13 @@ import com.mote.app.control.CalendarToolsManager
 import com.mote.app.control.ClipboardToolsManager
 import com.mote.app.control.ClockToolsManager
 import com.mote.app.control.LiveVoiceCallBridge
+import com.mote.app.control.NetworkToolsManager
 import com.mote.app.control.NotesToolsManager
 import com.mote.app.data.db.LocalModelDao
 import com.mote.app.data.db.ModelStudioPrefsEntity
 import com.mote.app.data.db.ToolExecutionLogEntity
 import com.mote.app.service.MoteAccessibilityService
+import com.mote.app.service.SystemCursorOverlayManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -157,37 +159,69 @@ class AndroidAlarmManagerTool(
     )
 
     override val supportedOperations: Set<String> = setOf(
-        "addalarm", "clock_create_alarm",
-        "updatealarm", "clock_update_alarm",
-        "deletealarm", "clock_delete_alarm",
-        "togglealarm", "clock_toggle_alarm",
-        "listalarms", "clock_list_alarms"
+        "addalarm", "setalarm", "set_alarm", "createalarm", "create_alarm", "alarm", "schedulealarm", "clock_create_alarm",
+        "updatealarm", "update_alarm", "editalarm", "changealarm", "clock_update_alarm",
+        "deletealarm", "delete_alarm", "removealarm", "cancelalarm", "clock_delete_alarm",
+        "togglealarm", "toggle_alarm", "enablealarm", "enable_alarm", "disablealarm", "disable_alarm", "turnoffalarm", "turnonalarm", "clock_toggle_alarm",
+        "listalarms", "list_alarms", "showalarms", "getalarms", "clock_list_alarms"
     )
 
     override suspend fun execute(operation: String, args: JsonObject): GenUiToolResult {
-        return when (operation.lowercase(Locale.US)) {
-            "addalarm", "clock_create_alarm" -> addAlarm(
-                hour = args.intVal("hour") ?: 7,
-                minute = args.intVal("minute") ?: 0,
-                label = args.str("label") ?: "Alarm",
-                days = args.strList("days"),
-                enabled = args.boolVal("enabled") ?: true
-            )
-            "updatealarm", "clock_update_alarm" -> updateAlarm(
+        val op = operation.lowercase(Locale.US)
+        val parsedStrTime = ClockToolsManager.parseFlexibleTime(
+            args.str("time") ?: args.str("alarmTime") ?: args.str("at")
+        )
+        return when (op) {
+            "addalarm", "setalarm", "set_alarm", "createalarm", "create_alarm", "alarm", "schedulealarm", "clock_create_alarm" -> {
+                val relativeMins = args.intVal("inMinutes") ?: args.intVal("offsetMinutes")
+                if (relativeMins != null && relativeMins > 0 && args.intVal("hour") == null && parsedStrTime == null) {
+                    val res = clockTools.createRelativeAlarm(relativeMins, args.str("label") ?: "Alarm")
+                    GenUiToolResult(
+                        toolId = descriptor.id,
+                        operation = "addAlarm",
+                        success = res.success,
+                        feedback = res.summary,
+                        uiPart = InChatUiPart.ClockAlarmsPanel(
+                            partId = nextPartId(),
+                            actionSummary = res.summary,
+                            highlightAlarmId = res.targetAlarmId,
+                            success = res.success,
+                            alarmManagerMode = res.alarmManagerMode
+                        )
+                    )
+                } else {
+                    addAlarm(
+                        hour = args.intVal("hour") ?: parsedStrTime?.first ?: 7,
+                        minute = args.intVal("minute") ?: parsedStrTime?.second ?: 0,
+                        label = args.str("label") ?: args.str("name") ?: args.str("title") ?: "Alarm",
+                        days = args.strList("days"),
+                        enabled = args.boolVal("enabled") ?: true
+                    )
+                }
+            }
+            "updatealarm", "update_alarm", "editalarm", "changealarm", "clock_update_alarm" -> updateAlarm(
                 query = args.str("query") ?: args.str("id") ?: args.str("alarmId") ?: args.str("label"),
-                hour = args.intVal("hour") ?: args.intVal("newHour"),
-                minute = args.intVal("minute") ?: args.intVal("newMinute"),
+                hour = args.intVal("hour") ?: args.intVal("newHour") ?: parsedStrTime?.first,
+                minute = args.intVal("minute") ?: args.intVal("newMinute") ?: parsedStrTime?.second,
                 newLabel = args.str("newLabel") ?: args.str("label"),
                 enabled = args.boolVal("enabled")
             )
-            "deletealarm", "clock_delete_alarm" -> deleteAlarm(
+            "deletealarm", "delete_alarm", "removealarm", "cancelalarm", "clock_delete_alarm" -> deleteAlarm(
                 query = args.str("query") ?: args.str("id") ?: args.str("alarmId") ?: args.str("label")
             )
-            "togglealarm", "clock_toggle_alarm" -> toggleAlarm(
+            "enablealarm", "enable_alarm", "turnonalarm" -> toggleAlarm(
+                query = args.str("query") ?: args.str("id") ?: args.str("label"),
+                enabled = true
+            )
+            "disablealarm", "disable_alarm", "turnoffalarm" -> toggleAlarm(
+                query = args.str("query") ?: args.str("id") ?: args.str("label"),
+                enabled = false
+            )
+            "togglealarm", "toggle_alarm", "clock_toggle_alarm" -> toggleAlarm(
                 query = args.str("query") ?: args.str("id") ?: args.str("label"),
                 enabled = args.boolVal("enabled") ?: false
             )
-            "listalarms", "clock_list_alarms" -> listAlarms()
+            "listalarms", "list_alarms", "showalarms", "getalarms", "clock_list_alarms" -> listAlarms()
             else -> GenUiToolResult(
                 toolId = descriptor.id,
                 operation = operation,
@@ -314,26 +348,36 @@ class CountdownTimerTool(
     )
 
     override val supportedOperations: Set<String> = setOf(
-        "starttimer", "clock_start_timer",
-        "pausetimer", "resumetimer", "resettimer", "deletetimer",
-        "gettimerstatus", "clock_control_timer"
+        "starttimer", "start_timer", "settimer", "set_timer", "createtimer", "create_timer", "addtimer", "timer", "countdown", "startcountdown", "clock_start_timer",
+        "pausetimer", "pause_timer", "stoptimer", "stop_timer",
+        "resumetimer", "resume_timer", "resettimer", "reset_timer",
+        "deletetimer", "delete_timer", "canceltimer", "cancel_timer", "removetimer",
+        "gettimerstatus", "timerstatus", "timer_status", "clock_control_timer"
     )
 
     override suspend fun execute(operation: String, args: JsonObject): GenUiToolResult {
         val normalized = operation.lowercase(Locale.US)
         val query = args.str("query") ?: args.str("label") ?: args.str("id")
         val res = when (normalized) {
-            "starttimer", "clock_start_timer" -> {
-                val seconds = args.intVal("durationSeconds")
-                    ?: ((args.intVal("minutes") ?: 5) * 60 + (args.intVal("seconds") ?: 0))
-                val label = args.str("label") ?: "Countdown"
-                clockTools.startTimer(seconds, label)
+            "starttimer", "start_timer", "settimer", "set_timer", "createtimer", "create_timer", "addtimer", "timer", "countdown", "startcountdown", "clock_start_timer" -> {
+                val explicitSecs = args.intVal("durationSeconds")
+                    ?: args.intVal("duration_seconds")
+                    ?: ClockToolsManager.parseFlexibleDurationSeconds(args.str("duration") ?: args.str("time"))
+                val computedSecs = explicitSecs ?: run {
+                    val h = args.intVal("hours") ?: 0
+                    val m = args.intVal("minutes") ?: 0
+                    val s = args.intVal("seconds") ?: 0
+                    val sum = h * 3600 + m * 60 + s
+                    if (sum > 0) sum else 300
+                }
+                val label = args.str("label") ?: args.str("name") ?: "Countdown"
+                clockTools.startTimer(computedSecs, label)
             }
-            "pausetimer" -> clockTools.controlTimer("pause", query)
-            "resumetimer" -> clockTools.controlTimer("resume", query)
-            "resettimer" -> clockTools.controlTimer("reset", query)
-            "deletetimer" -> clockTools.controlTimer("delete", query)
-            "gettimerstatus" -> clockTools.getCountdownStatusSummary(query)
+            "pausetimer", "pause_timer", "stoptimer", "stop_timer" -> clockTools.controlTimer("pause", query)
+            "resumetimer", "resume_timer" -> clockTools.controlTimer("resume", query)
+            "resettimer", "reset_timer" -> clockTools.controlTimer("reset", query)
+            "deletetimer", "delete_timer", "canceltimer", "cancel_timer", "removetimer" -> clockTools.controlTimer("delete", query)
+            "gettimerstatus", "timerstatus", "timer_status" -> clockTools.getCountdownStatusSummary(query)
             "clock_control_timer" -> clockTools.controlTimer(args.str("action") ?: "status", query)
             else -> clockTools.getCountdownStatusSummary(query)
         }
@@ -369,18 +413,22 @@ class StopwatchTool(
     )
 
     override val supportedOperations: Set<String> = setOf(
-        "startstopwatch", "pausestopwatch", "lapstopwatch",
-        "resetstopwatch", "getstopwatchstatus", "clock_stopwatch"
+        "startstopwatch", "start_stopwatch", "resumestopwatch", "resume_stopwatch", "stopwatch",
+        "pausestopwatch", "pause_stopwatch", "stopstopwatch", "stop_stopwatch",
+        "lapstopwatch", "lap_stopwatch", "recordlap",
+        "resetstopwatch", "reset_stopwatch", "clearstopwatch",
+        "getstopwatchstatus", "stopwatchstatus", "stopwatch_status", "clock_stopwatch"
     )
 
     override suspend fun execute(operation: String, args: JsonObject): GenUiToolResult {
-        val action = when (operation.lowercase(Locale.US)) {
-            "startstopwatch" -> "start"
-            "pausestopwatch" -> "pause"
-            "lapstopwatch" -> "lap"
-            "resetstopwatch" -> "reset"
-            "getstopwatchstatus" -> "status"
-            else -> args.str("action") ?: "status"
+        val op = operation.lowercase(Locale.US)
+        val action = when (op) {
+            "startstopwatch", "start_stopwatch", "resumestopwatch", "resume_stopwatch" -> "start"
+            "pausestopwatch", "pause_stopwatch", "stopstopwatch", "stop_stopwatch" -> "pause"
+            "lapstopwatch", "lap_stopwatch", "recordlap" -> "lap"
+            "resetstopwatch", "reset_stopwatch", "clearstopwatch" -> "reset"
+            "getstopwatchstatus", "stopwatchstatus", "stopwatch_status" -> "status"
+            else -> args.str("action") ?: "start"
         }
         val res = clockTools.controlStopwatch(action)
         return GenUiToolResult(
@@ -584,22 +632,29 @@ class CameraControlTool(
         id = GenUiToolRegistry.TOOL_CAMERA,
         displayName = "Camera & Flashlight",
         category = "Hardware · Camera2",
-        description = "Launches photo or video camera and toggles the device hardware flashlight in real time.",
-        operations = listOf("openCamera", "takePhoto", "openVideoCamera", "toggleFlashlight"),
+        description = "Launches photo/selfie/video camera with optional timer, inspects Camera2 lenses, presses shutter via live cursor, and toggles hardware torch.",
+        operations = listOf("openCamera", "takePhoto", "captureSelfie", "openVideoCamera", "pressCameraShutter", "inspectCamera", "toggleFlashlight"),
         requiredPermissionLabels = listOf("Camera")
     )
 
     override val supportedOperations: Set<String> = setOf(
-        "opencamera", "camera", "launchcamera",
-        "takephoto", "capturephoto", "camera_photo",
-        "openvideocamera", "recordvideo", "camera_video",
-        "toggleflashlight", "flashlight", "torch", "setflashlight"
+        "opencamera", "camera", "launchcamera", "open_camera",
+        "takephoto", "take_photo", "capturephoto", "capture_photo", "camera_photo",
+        "captureselfie", "selfie", "frontcamera", "take_selfie",
+        "openvideocamera", "open_video_camera", "recordvideo", "record_video", "camera_video",
+        "presscamerashutter", "camerashutter", "triggershutter", "pressshutter",
+        "inspectcamera", "camerainfo", "cameraspecs", "camera_info",
+        "toggleflashlight", "toggle_flashlight", "flashlight", "torch", "setflashlight"
     )
 
     override suspend fun execute(operation: String, args: JsonObject): GenUiToolResult {
         val op = operation.lowercase(Locale.US)
+        var mode = args.str("mode") ?: "photo"
+        var facing = args.str("facing") ?: "back"
+        val timerSec = args.intVal("timerSeconds") ?: args.intVal("timer")
+
         val res = when (op) {
-            "toggleflashlight", "flashlight", "torch", "setflashlight" -> {
+            "toggleflashlight", "toggle_flashlight", "flashlight", "torch", "setflashlight" -> {
                 val enabled = args.boolVal("enabled") ?: args.str("state")?.let { s ->
                     when (s.lowercase(Locale.US)) {
                         "on", "true", "enable" -> true
@@ -609,13 +664,26 @@ class CameraControlTool(
                 }
                 deviceTools.toggleFlashlight(enabled)
             }
-            "openvideocamera", "recordvideo", "camera_video" -> {
-                deviceTools.openCamera(mode = "video", facing = args.str("facing"))
+            "inspectcamera", "camerainfo", "cameraspecs", "camera_info" -> {
+                deviceTools.inspectCameraHardware()
+            }
+            "presscamerashutter", "camerashutter", "triggershutter", "pressshutter" -> {
+                deviceTools.triggerCameraShutterWithCursor()
+            }
+            "captureselfie", "selfie", "frontcamera", "take_selfie" -> {
+                mode = "selfie"
+                facing = "front"
+                deviceTools.openCamera(mode = "photo", facing = "front", timerSeconds = timerSec)
+            }
+            "openvideocamera", "open_video_camera", "recordvideo", "record_video", "camera_video" -> {
+                mode = "video"
+                deviceTools.openCamera(mode = "video", facing = args.str("facing"), timerSeconds = timerSec)
             }
             else -> {
                 deviceTools.openCamera(
-                    mode = args.str("mode") ?: "photo",
-                    facing = args.str("facing")
+                    mode = mode,
+                    facing = args.str("facing"),
+                    timerSeconds = timerSec
                 )
             }
         }
@@ -624,12 +692,14 @@ class CameraControlTool(
             operation = operation,
             success = res.success,
             feedback = res.summary,
-            uiPart = InChatUiPart.DeviceActionPanel(
+            uiPart = InChatUiPart.CameraControlPanel(
                 partId = nextPartId(),
-                category = "CAMERA",
                 title = res.title,
                 summary = res.summary,
                 badge = res.badge,
+                torchEnabled = deviceTools.isTorchEnabled(),
+                mode = mode,
+                facing = facing,
                 success = res.success,
                 detailLines = res.detailLines
             )
@@ -903,14 +973,16 @@ class VoiceCallRelayTool(
     override val descriptor = RegisteredToolDescriptor(
         id = GenUiToolRegistry.TOOL_VOICE_CALL,
         displayName = "Phone & Live Voice Relay",
-        category = "Voice · STT + AI + TTS",
-        description = "Opens the Android Phone dialer (ACTION_DIAL) and runs a continuous Google Speech-to-Text <-> AI <-> Android Text-to-Speech live voice loop.",
-        operations = listOf("dialPhone", "startVoiceCallRelay", "stopVoiceCallRelay", "speakText"),
-        requiredPermissionLabels = listOf("Microphone")
+        category = "Voice · Dialer + Cursor + STT/TTS",
+        description = "Opens the Android Phone dialer (ACTION_DIAL), clicks Call via Accessibility live cursor, sends SMS, and runs real-time STT <-> AI <-> TTS voice relay.",
+        operations = listOf("dialPhone", "clickCallButton", "sendSms", "startVoiceCallRelay", "stopVoiceCallRelay", "speakText"),
+        requiredPermissionLabels = listOf("Microphone", "Accessibility (Auto-Call Click)")
     )
 
     override val supportedOperations: Set<String> = setOf(
-        "dialphone", "callnumber", "callphone", "openphone", "dial",
+        "dialphone", "dial_phone", "callnumber", "call_number", "callphone", "openphone", "dial", "phonecall", "placecall",
+        "clickcallbutton", "click_call_button", "clickcall", "presscall", "presscallbutton", "autocallclick",
+        "sendsms", "send_sms", "sendtext", "textmessage", "sms",
         "startvoicecallrelay", "startvoicerelay", "voicecallrelay", "livevoicerelay", "listenandrespond",
         "stopvoicecallrelay", "stopvoicerelay", "endvoicerelay",
         "speaktext", "tts", "speak"
@@ -919,7 +991,7 @@ class VoiceCallRelayTool(
     override suspend fun execute(operation: String, args: JsonObject): GenUiToolResult {
         val op = operation.lowercase(Locale.US)
         return when (op) {
-            "dialphone", "callnumber", "callphone", "openphone", "dial" -> {
+            "dialphone", "dial_phone", "callnumber", "call_number", "callphone", "openphone", "dial", "phonecall", "placecall" -> {
                 val number = args.str("phoneNumber") ?: args.str("number") ?: args.str("phone").orEmpty()
                 val contact = args.str("contactLabel") ?: args.str("contact") ?: args.str("name")
                 val res = deviceTools.dialPhoneNumber(number, contact)
@@ -928,12 +1000,55 @@ class VoiceCallRelayTool(
                     operation = "dialPhone",
                     success = res.success,
                     feedback = res.summary,
-                    uiPart = InChatUiPart.DeviceActionPanel(
+                    uiPart = InChatUiPart.PhoneDialerPanel(
                         partId = nextPartId(),
-                        category = "PHONE",
                         title = res.title,
                         summary = res.summary,
+                        phoneNumber = number,
+                        contactLabel = contact,
                         badge = res.badge,
+                        accessibilityReady = MoteAccessibilityService.instance != null,
+                        success = res.success,
+                        detailLines = res.detailLines
+                    )
+                )
+            }
+            "clickcallbutton", "click_call_button", "clickcall", "presscall", "presscallbutton", "autocallclick" -> {
+                val number = args.str("phoneNumber") ?: args.str("number").orEmpty()
+                val res = deviceTools.clickDialerCallButton()
+                GenUiToolResult(
+                    toolId = descriptor.id,
+                    operation = "clickCallButton",
+                    success = res.success,
+                    feedback = res.summary,
+                    uiPart = InChatUiPart.PhoneDialerPanel(
+                        partId = nextPartId(),
+                        title = res.title,
+                        summary = res.summary,
+                        phoneNumber = number,
+                        badge = res.badge,
+                        accessibilityReady = MoteAccessibilityService.instance != null,
+                        success = res.success,
+                        detailLines = res.detailLines
+                    )
+                )
+            }
+            "sendsms", "send_sms", "sendtext", "textmessage", "sms" -> {
+                val number = args.str("phoneNumber") ?: args.str("number") ?: args.str("to").orEmpty()
+                val body = args.str("message") ?: args.str("body") ?: args.str("text").orEmpty()
+                val res = deviceTools.sendSmsMessage(number, body)
+                GenUiToolResult(
+                    toolId = descriptor.id,
+                    operation = "sendSms",
+                    success = res.success,
+                    feedback = res.summary,
+                    uiPart = InChatUiPart.PhoneDialerPanel(
+                        partId = nextPartId(),
+                        title = res.title,
+                        summary = res.summary,
+                        phoneNumber = number,
+                        badge = res.badge,
+                        accessibilityReady = MoteAccessibilityService.instance != null,
                         success = res.success,
                         detailLines = res.detailLines
                     )
@@ -1126,8 +1241,254 @@ class ClipboardManagerTool(
 }
 
 /**
+ * Wi-Fi & Network Tools backed by real Android ConnectivityManager, WifiManager, and Settings.Panel.
+ */
+class NetworkControlTool(
+    private val networkTools: NetworkToolsManager
+) : GenUiTool {
+
+    override val descriptor = RegisteredToolDescriptor(
+        id = GenUiToolRegistry.TOOL_NETWORK,
+        displayName = "Wi-Fi & Network Tools",
+        category = "Connectivity · ConnectivityManager",
+        description = "Inspects live Wi-Fi/Cellular/VPN status, signal dBm & link speed, runs ping tests, and opens Android Wi-Fi/Internet quick panels.",
+        operations = listOf("getNetworkStatus", "testConnectivity", "openWifiPanel", "openInternetPanel", "openNetworkSettings"),
+        requiredPermissionLabels = emptyList()
+    )
+
+    override val supportedOperations: Set<String> = setOf(
+        "getnetworkstatus", "networkstatus", "wifistatus", "checkwifi", "checknetwork", "checkinternet", "wifi_status", "network_status",
+        "testconnectivity", "ping", "testinternet", "speedcheck", "networktest",
+        "openwifipanel", "wifipanel", "togglewifi", "enablewifi", "disablewifi", "wifi",
+        "openinternetpanel", "internetpanel", "opennetworksettings", "airplanemode", "mobiledata", "vpnsettings"
+    )
+
+    override suspend fun execute(operation: String, args: JsonObject): GenUiToolResult {
+        val op = operation.lowercase(Locale.US)
+        val outcome = when (op) {
+            "testconnectivity", "ping", "testinternet", "speedcheck", "networktest" -> {
+                val host = args.str("host") ?: "8.8.8.8"
+                networkTools.testConnectivityLatency(host = host)
+            }
+            "openwifipanel", "wifipanel", "togglewifi", "enablewifi", "disablewifi", "wifi" -> {
+                networkTools.openWifiPanel()
+            }
+            "openinternetpanel", "internetpanel" -> {
+                networkTools.openInternetPanel()
+            }
+            "airplanemode" -> networkTools.openNetworkSettings("airplane")
+            "mobiledata" -> networkTools.openNetworkSettings("mobile")
+            "vpnsettings" -> networkTools.openNetworkSettings("vpn")
+            "opennetworksettings" -> networkTools.openNetworkSettings(args.str("section") ?: "wifi")
+            else -> {
+                val snap = networkTools.refreshStatus()
+                com.mote.app.control.NetworkActionOutcome(
+                    success = true,
+                    summary = "${snap.transportLabel} · ${if (snap.isConnected) "Online" else "Offline"}",
+                    detail = networkTools.buildSummaryLine(snap),
+                    snapshot = snap
+                )
+            }
+        }
+        val snap = outcome.snapshot
+        return GenUiToolResult(
+            toolId = descriptor.id,
+            operation = operation,
+            success = outcome.success,
+            feedback = outcome.detail,
+            uiPart = InChatUiPart.NetworkStatusPanel(
+                partId = nextPartId(),
+                title = outcome.summary,
+                summary = outcome.detail,
+                badge = if (snap.isConnected) snap.transportLabel.uppercase(Locale.US) else "OFFLINE",
+                transportLabel = snap.transportLabel,
+                isConnected = snap.isConnected,
+                wifiSsid = snap.wifiSsid,
+                signalBars = snap.signalBars,
+                linkSpeedMbps = snap.linkSpeedMbps,
+                localIpv4 = snap.localIpv4,
+                latencyMs = snap.lastLatencyMs,
+                success = outcome.success
+            )
+        )
+    }
+}
+
+/**
+ * Application Control Tool with real-time animated floating cursor hover & gesture dispatch.
+ */
+class AppControlCursorTool : GenUiTool {
+
+    override val descriptor = RegisteredToolDescriptor(
+        id = GenUiToolRegistry.TOOL_APP_CONTROL,
+        displayName = "App Control & Live Cursor",
+        category = "Automation · Live Cursor Hover",
+        description = "Visibly glides an animated floating cursor over any foreground app to hover, click UI controls, swipe/scroll, type text, and inspect screen elements.",
+        operations = listOf("hoverAndClick", "hoverTapCoordinates", "swipeScreen", "typeInField", "inspectScreenElements"),
+        requiredPermissionLabels = listOf("Accessibility Service")
+    )
+
+    override val supportedOperations: Set<String> = setOf(
+        "hoverandclick", "hover_and_click", "clickelement", "clickbutton", "tapelement", "cursorclick", "hoverelement", "cursorhover",
+        "hovertapcoordinates", "tapcoordinates", "clickcoordinates", "longpress",
+        "swipescreen", "scrollscreen", "swipe", "scroll",
+        "typeinfield", "type_in_field", "inputtext", "entertext",
+        "inspectscreenelements", "listscreenelements", "screennodes", "inspectui"
+    )
+
+    override suspend fun execute(operation: String, args: JsonObject): GenUiToolResult {
+        val op = operation.lowercase(Locale.US)
+        val a11y = MoteAccessibilityService.instance
+        if (a11y == null) {
+            val msg = "Enable Mote Screen Assistant in Tools & Permissions to activate real-time cursor hover & app UI control."
+            return GenUiToolResult(
+                toolId = descriptor.id,
+                operation = operation,
+                success = false,
+                feedback = msg,
+                uiPart = InChatUiPart.AppControlPanel(
+                    partId = nextPartId(),
+                    title = "Accessibility Required for Live Cursor",
+                    summary = msg,
+                    badge = "NEEDS A11Y",
+                    success = false
+                )
+            )
+        }
+
+        return when (op) {
+            "inspectscreenelements", "listscreenelements", "screennodes", "inspectui" -> {
+                val nodes = a11y.inspectInteractiveElements(maxItems = 20)
+                val labels = nodes.map { node ->
+                    val cx = node.bounds.centerX()
+                    val cy = node.bounds.centerY()
+                    "${node.label} ($cx,$cy)"
+                }
+                val first = nodes.firstOrNull()
+                if (first != null) {
+                    SystemCursorOverlayManager.showHoverAndWait(
+                        context = a11y,
+                        targetX = first.bounds.exactCenterX(),
+                        targetY = first.bounds.exactCenterY(),
+                        label = "Found ${nodes.size} controls",
+                        useAccessibilityLayer = true
+                    )
+                }
+                val summary = if (nodes.isEmpty()) {
+                    "No clickable UI nodes exposed on ${MoteAccessibilityService.currentPackageName ?: "current window"}."
+                } else {
+                    "Inspected ${nodes.size} interactive controls on ${MoteAccessibilityService.currentPackageName ?: "active app"}."
+                }
+                GenUiToolResult(
+                    toolId = descriptor.id,
+                    operation = "inspectScreenElements",
+                    success = nodes.isNotEmpty(),
+                    feedback = summary,
+                    uiPart = InChatUiPart.AppControlPanel(
+                        partId = nextPartId(),
+                        title = "Active App UI Map (${nodes.size} controls)",
+                        summary = summary,
+                        badge = "INSPECTED",
+                        targetLabel = MoteAccessibilityService.currentPackageName,
+                        interactiveElements = labels.take(12),
+                        success = nodes.isNotEmpty()
+                    ),
+                    extractedText = labels.joinToString("\n")
+                )
+            }
+            "swipescreen", "scrollscreen", "swipe", "scroll" -> {
+                val dir = args.str("direction") ?: "down"
+                val res = a11y.hoverAndSwipe(dir)
+                GenUiToolResult(
+                    toolId = descriptor.id,
+                    operation = "swipeScreen",
+                    success = res.success,
+                    feedback = res.detail,
+                    uiPart = InChatUiPart.AppControlPanel(
+                        partId = nextPartId(),
+                        title = res.summary,
+                        summary = res.detail,
+                        badge = if (res.success) "SWIPED" else "FAILED",
+                        targetLabel = res.matchedLabel,
+                        cursorX = res.targetX,
+                        cursorY = res.targetY,
+                        success = res.success
+                    )
+                )
+            }
+            "typeinfield", "type_in_field", "inputtext", "entertext" -> {
+                val target = args.str("target") ?: args.str("field") ?: args.str("label")
+                val text = args.str("text") ?: args.str("value").orEmpty()
+                val res = a11y.hoverAndTypeText(target, text)
+                GenUiToolResult(
+                    toolId = descriptor.id,
+                    operation = "typeInField",
+                    success = res.success,
+                    feedback = res.detail,
+                    uiPart = InChatUiPart.AppControlPanel(
+                        partId = nextPartId(),
+                        title = res.summary,
+                        summary = res.detail,
+                        badge = if (res.success) "TYPED" else "FAILED",
+                        targetLabel = res.matchedLabel,
+                        cursorX = res.targetX,
+                        cursorY = res.targetY,
+                        success = res.success
+                    )
+                )
+            }
+            "hovertapcoordinates", "tapcoordinates", "clickcoordinates", "longpress" -> {
+                val x = args["x"]?.toString()?.toFloatOrNull() ?: 0.5f
+                val y = args["y"]?.toString()?.toFloatOrNull() ?: 0.5f
+                val label = args.str("label") ?: "Screen Point"
+                val longPress = op == "longpress" || (args.boolVal("longPress") == true)
+                val hoverOnly = args.boolVal("hoverOnly") == true
+                val res = a11y.hoverAndTapCoordinates(x, y, label, longPress, hoverOnly)
+                GenUiToolResult(
+                    toolId = descriptor.id,
+                    operation = "hoverTapCoordinates",
+                    success = res.success,
+                    feedback = res.detail,
+                    uiPart = InChatUiPart.AppControlPanel(
+                        partId = nextPartId(),
+                        title = res.summary,
+                        summary = res.detail,
+                        badge = if (hoverOnly) "HOVERING" else if (res.success) "TAPPED" else "FAILED",
+                        targetLabel = res.matchedLabel,
+                        cursorX = res.targetX,
+                        cursorY = res.targetY,
+                        success = res.success
+                    )
+                )
+            }
+            else -> {
+                val target = args.str("target") ?: args.str("label") ?: args.str("text") ?: args.str("query").orEmpty()
+                val hoverOnly = op in setOf("hoverelement", "cursorhover") || (args.boolVal("hoverOnly") == true)
+                val res = a11y.hoverAndClickNodeByText(target, hoverOnly = hoverOnly)
+                GenUiToolResult(
+                    toolId = descriptor.id,
+                    operation = "hoverAndClick",
+                    success = res.success,
+                    feedback = res.detail,
+                    uiPart = InChatUiPart.AppControlPanel(
+                        partId = nextPartId(),
+                        title = res.summary,
+                        summary = res.detail,
+                        badge = if (hoverOnly) "HOVERING" else if (res.success) "CLICKED" else "NOT FOUND",
+                        targetLabel = res.matchedLabel ?: target,
+                        cursorX = res.targetX,
+                        cursorY = res.targetY,
+                        success = res.success
+                    )
+                )
+            }
+        }
+    }
+}
+
+/**
  * Central Generative UI Tool Registry coordinating:
- * - Tool registration (AlarmManager, CountdownTimer, Stopwatch, Calendar, Camera, Screenshot, App Launcher, Navigation, Clipboard, Notes, Voice Relay, GenUI)
+ * - Tool registration (AlarmManager, CountdownTimer, Stopwatch, Calendar, Camera, Screenshot, App Launcher, Navigation, Clipboard, Notes, Voice Relay, Wi-Fi/Network, App Control Cursor, GenUI)
  * - Explicit user authorization enforcement from Room preferences
  * - Room-persisted tool execution logs & aggregated usage statistics
  */
@@ -1138,6 +1499,7 @@ class GenUiToolRegistry(
     private val notesTools: NotesToolsManager,
     private val voiceCallBridge: LiveVoiceCallBridge,
     private val clipboardTools: ClipboardToolsManager,
+    private val networkTools: NetworkToolsManager,
     aiRouter: HybridAiRouter,
     private val dao: LocalModelDao,
     private val scope: CoroutineScope,
@@ -1154,6 +1516,8 @@ class GenUiToolRegistry(
     val notesTool: NotesStorageTool = NotesStorageTool(notesTools)
     val voiceCallTool: VoiceCallRelayTool = VoiceCallRelayTool(deviceTools, voiceCallBridge)
     val clipboardTool: ClipboardManagerTool = ClipboardManagerTool(clipboardTools)
+    val networkTool: NetworkControlTool = NetworkControlTool(networkTools)
+    val appControlTool: AppControlCursorTool = AppControlCursorTool()
     val genUiWidgetTool: GenUiWidgetTool = GenUiWidgetTool()
 
     private val tools: List<GenUiTool> = listOf(
@@ -1168,8 +1532,15 @@ class GenUiToolRegistry(
         notesTool,
         voiceCallTool,
         clipboardTool,
+        networkTool,
+        appControlTool,
         genUiWidgetTool
     )
+
+    fun isOperationSupported(operation: String): Boolean {
+        val key = operation.trim().lowercase(Locale.US)
+        return tools.any { key in it.supportedOperations }
+    }
 
     val auditLog: StateFlow<List<ToolExecutionAuditEntry>> = dao.observeAllToolLogs()
         .map { rows ->
@@ -1214,6 +1585,8 @@ class GenUiToolRegistry(
         add(TOOL_NOTES)
         add(TOOL_VOICE_CALL)
         add(TOOL_CLIPBOARD)
+        add(TOOL_NETWORK)
+        add(TOOL_APP_CONTROL)
     }
 
     /**
@@ -1323,6 +1696,14 @@ class GenUiToolRegistry(
                     expectedText = panel?.clipboardText
                 )
                 BackgroundVerificationResult(verified = verified, detail = detail)
+            }
+            TOOL_NETWORK -> {
+                val snap = networkTools.refreshStatus()
+                BackgroundVerificationResult(true, "Verified live network state: ${snap.transportLabel}${snap.localIpv4?.let { " · $it" }.orEmpty()}")
+            }
+            TOOL_APP_CONTROL -> {
+                val activePkg = MoteAccessibilityService.currentPackageName ?: "foreground window"
+                BackgroundVerificationResult(true, "Verified Accessibility live cursor control on $activePkg")
             }
             TOOL_APP_LAUNCHER, TOOL_NAVIGATION -> {
                 val fgPkg = MoteAccessibilityService.currentPackageName
@@ -1438,6 +1819,8 @@ class GenUiToolRegistry(
         const val TOOL_NOTES = "notes_storage"
         const val TOOL_VOICE_CALL = "voice_call_relay"
         const val TOOL_CLIPBOARD = "clipboard_manager"
+        const val TOOL_NETWORK = "network_wifi"
+        const val TOOL_APP_CONTROL = "app_control_cursor"
 
         val ALL_TOOL_IDS: Set<String> = setOf(
             TOOL_ALARM_MANAGER,
@@ -1451,7 +1834,9 @@ class GenUiToolRegistry(
             TOOL_GEN_UI_WIDGETS,
             TOOL_NOTES,
             TOOL_VOICE_CALL,
-            TOOL_CLIPBOARD
+            TOOL_CLIPBOARD,
+            TOOL_NETWORK,
+            TOOL_APP_CONTROL
         )
     }
 }

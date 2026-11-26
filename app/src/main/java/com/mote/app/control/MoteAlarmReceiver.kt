@@ -8,7 +8,10 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.RingtoneManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -16,10 +19,11 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.mote.app.MainActivity
 import com.mote.app.R
+import com.mote.app.service.SystemOverlayStateBus
 
 /**
  * Receives alarms scheduled via Android's AlarmManager from Mote's Alarm Tool interface.
- * Vibrates and posts a high-priority alarm notification if notifications are permitted.
+ * Vibrates, plays a brief alarm chime, updates the floating overlay HUD, and posts a high-priority notification.
  */
 class MoteAlarmReceiver : BroadcastReceiver() {
 
@@ -29,7 +33,25 @@ class MoteAlarmReceiver : BroadcastReceiver() {
         val formattedTime = intent.getStringExtra(EXTRA_ALARM_TIME).orEmpty()
 
         triggerVibration(context)
+        playBriefAlarmTone(context)
+        SystemOverlayStateBus.publishAppContext(
+            appLabel = "Alarm",
+            statusBanner = if (formattedTime.isNotBlank()) "Alarm: $label ($formattedTime)" else "Alarm: $label"
+        )
         postAlarmNotification(context, alarmId, label, formattedTime)
+    }
+
+    private fun playBriefAlarmTone(context: Context) {
+        runCatching {
+            val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                ?: return
+            val ringtone = RingtoneManager.getRingtone(context.applicationContext, uri) ?: return
+            ringtone.play()
+            Handler(Looper.getMainLooper()).postDelayed({
+                runCatching { if (ringtone.isPlaying) ringtone.stop() }
+            }, 4200L)
+        }
     }
 
     private fun triggerVibration(context: Context) {

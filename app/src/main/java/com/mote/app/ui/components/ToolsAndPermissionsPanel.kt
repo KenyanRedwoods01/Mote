@@ -43,6 +43,7 @@ import com.mote.app.ai.RegisteredToolDescriptor
 import com.mote.app.ai.ToolExecutionAuditEntry
 import com.mote.app.control.ToolPermissionsSnapshot
 import com.mote.app.data.db.ModelStudioPrefsEntity
+import com.mote.app.ui.theme.LocalMoteColors
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -64,12 +65,13 @@ fun ModelToolsRegistryCard(
     activeCalendarCount: Int = 0,
     onToggleTool: (toolId: String, enabled: Boolean) -> Unit
 ) {
+    val tokens = LocalMoteColors.current
     val enabledCount = tools.count { isToolEnabled(it.id, prefs) }
 
     MoteCard(
-        background = Color.White,
+        background = tokens.surface,
         modifier = Modifier
-            .border(1.dp, CloudFlashCobalt.copy(alpha = 0.2f), RoundedCornerShape(14.dp))
+            .border(1.dp, CloudFlashCobalt.copy(alpha = 0.25f), RoundedCornerShape(14.dp))
             .testTag("model_tools_registry_card")
     ) {
         Row(
@@ -156,6 +158,31 @@ fun ModelToolsRegistryCard(
                         LocalNanoEmerald,
                         if (permissions.accessibilityGranted) "System + Maps" else "Maps + Settings"
                     )
+                    GenUiToolRegistry.TOOL_NETWORK -> Triple(
+                        Icons.Outlined.Wifi,
+                        LocalNanoEmerald,
+                        "Wi-Fi + Ping"
+                    )
+                    GenUiToolRegistry.TOOL_APP_CONTROL -> Triple(
+                        Icons.Outlined.AdsClick,
+                        Color(0xFF0EA5E9),
+                        if (permissions.accessibilityGranted) "Live Cursor Armed" else "Preview Cursor"
+                    )
+                    GenUiToolRegistry.TOOL_VOICE_CALL -> Triple(
+                        Icons.Outlined.Phone,
+                        LocalNanoEmerald,
+                        "Dial + Cursor + Relay"
+                    )
+                    GenUiToolRegistry.TOOL_CLIPBOARD -> Triple(
+                        Icons.Outlined.ContentPaste,
+                        Color(0xFF0EA5E9),
+                        "System Clipboard"
+                    )
+                    GenUiToolRegistry.TOOL_NOTES -> Triple(
+                        Icons.Outlined.Description,
+                        LocalNanoEmerald,
+                        "Room Notes"
+                    )
                     else -> Triple(
                         Icons.Outlined.DashboardCustomize,
                         Color(0xFF7C3AED),
@@ -167,10 +194,10 @@ fun ModelToolsRegistryCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
-                        .background(if (enabled) Color(0xFFF8FAFC) else Color(0xFFF1F5F9).copy(alpha = 0.65f))
+                        .background(if (enabled) MoteSurfaceSubtle else MoteSurfaceSubtle.copy(alpha = 0.55f))
                         .border(
                             width = 1.dp,
-                            color = if (enabled) accent.copy(alpha = 0.25f) else Color(0x120F172A),
+                            color = if (enabled) accent.copy(alpha = 0.25f) else MoteBorder,
                             shape = RoundedCornerShape(12.dp)
                         )
                         .padding(11.dp)
@@ -216,7 +243,7 @@ fun ModelToolsRegistryCard(
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(999.dp))
-                                            .background(Color.White)
+                                            .background(tokens.surface)
                                             .padding(horizontal = 6.dp, vertical = 1.5.dp)
                                     ) {
                                         Text(
@@ -253,8 +280,8 @@ fun ModelToolsRegistryCard(
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(6.dp))
-                                    .background(Color.White)
-                                    .border(0.75.dp, Color(0x160F172A), RoundedCornerShape(6.dp))
+                                    .background(tokens.surface)
+                                    .border(0.75.dp, MoteBorder, RoundedCornerShape(6.dp))
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                             ) {
                                 Text(

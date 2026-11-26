@@ -134,6 +134,17 @@ class ClockToolsManager(context: Context) {
         )
     }
 
+    suspend fun createRelativeAlarm(offsetMinutes: Int, label: String): ClockToolExecutionOutcome {
+        val safeOffset = offsetMinutes.coerceIn(1, 24 * 60)
+        val cal = Calendar.getInstance().apply { add(Calendar.MINUTE, safeOffset) }
+        return createAlarm(
+            hour = cal.get(Calendar.HOUR_OF_DAY),
+            minute = cal.get(Calendar.MINUTE),
+            label = label.ifBlank { "Alarm (+${safeOffset}m)" },
+            enabled = true
+        )
+    }
+
     suspend fun setAlarmEnabled(queryOrId: String?, enabled: Boolean): ClockToolExecutionOutcome {
         val current = dao.getAllAlarmsOnce()
         if (current.isEmpty()) {
@@ -373,7 +384,7 @@ class ClockToolsManager(context: Context) {
     // --- COUNTDOWN TIMERS (Real-Time Ticking) ---
 
     fun startTimer(durationSeconds: Int, label: String): ClockToolExecutionOutcome {
-        val safeSeconds = durationSeconds.coerceIn(5, 24 * 3600)
+        val safeSeconds = durationSeconds.coerceIn(1, 24 * 3600)
         val cleanLabel = label.trim().ifBlank { "Countdown" }.take(50)
         val id = "timer_${UUID.randomUUID().toString().take(8)}"
         val item = CountdownTimerItem(
@@ -466,14 +477,25 @@ class ClockToolsManager(context: Context) {
     }
 
     fun addSecondsToTimer(timerId: String, extraSeconds: Int) {
+        var shouldTick = false
         _timers.update { items ->
             items.map {
                 if (it.id == timerId) {
                     val newRem = (it.remainingSeconds + extraSeconds).coerceAtLeast(0)
                     val newTotal = maxOf(it.totalSeconds, newRem)
-                    it.copy(totalSeconds = newTotal, remainingSeconds = newRem, isFinished = newRem == 0)
+                    val resume = newRem > 0 && (it.isRunning || it.isFinished)
+                    if (resume) shouldTick = true
+                    it.copy(
+                        totalSeconds = newTotal,
+                        remainingSeconds = newRem,
+                        isRunning = resume,
+                        isFinished = newRem == 0
+                    )
                 } else it
             }
+        }
+        if (shouldTick) {
+            ensureTimerTickerRunning()
         }
     }
 
@@ -693,6 +715,49 @@ class ClockToolsManager(context: Context) {
             val secs = totalSeconds % 60L
             val centis = (safe % 1000L) / 10L
             return String.format(Locale.US, "%02d:%02d.%02d", mins, secs, centis)
+        }
+
+        /**
+         * Parses flexible time strings such as "7:30 AM", "19:45", "6 am", "07:05 pm", "8.15pm".
+         */
+        fun parseFlexibleTime(raw: String?): Pair<Int, Int>? {
+            val text = raw?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotBlank() } ?: return null
+            val regex = Regex("""\b(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\b""")
+            val match = regex.find(text) ?: return null
+            var hour = match.groupValues[1].toIntOrNull() ?: return null
+            val minute = match.groupValues[2].toIntOrNull() ?: 0
+            val amPm = match.groupValues[3].replace(".", "")
+            if (amPm.isEmpty() && match.groupValues[2].isEmpty() && hour > 23) return null
+            if (amPm == "pm" && hour in 1..11) hour += 12
+            if (amPm == "am" && hour == 12) hour = 0
+            return hour.coerceIn(0, 23) to minute.coerceIn(0, 59)
+        }
+
+        /**
+         * Parses flexible duration strings such as "5m", "1h 30m", "90 seconds", "02:30".
+         */
+        fun parseFlexibleDurationSeconds(raw: String?): Int? {
+            val text = raw?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotBlank() } ?: return null
+            // HH:MM:SS or MM:SS
+            Regex("""^(\d{1,2}):(\d{2})(?::(\d{2}))?$""").matchEntire(text)?.let { m ->
+                val a = m.groupValues[1].toIntOrNull() ?: 0
+                val b = m.groupValues[2].toIntOrNull() ?: 0
+                val c = m.groupValues[3].toIntOrNull()
+                return if (c != null) a * 3600 + b * 60 + c else a * 60 + b
+            }
+            var total = 0
+            Regex("""(\d+)\s*(hours?|hrs?|h)\b""").findAll(text).forEach {
+                total += (it.groupValues[1].toIntOrNull() ?: 0) * 3600
+            }
+            Regex("""(\d+)\s*(minutes?|mins?|m)\b""").findAll(text).forEach {
+                total += (it.groupValues[1].toIntOrNull() ?: 0) * 60
+            }
+            Regex("""(\d+)\s*(seconds?|secs?|s)\b""").findAll(text).forEach {
+                total += (it.groupValues[1].toIntOrNull() ?: 0)
+            }
+            if (total > 0) return total
+            text.toIntOrNull()?.let { return it }
+            return null
         }
     }
 }

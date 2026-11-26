@@ -60,11 +60,27 @@ import kotlin.math.abs
 import kotlin.math.sin
 
 /**
- * Chronological, verifiable 'Tool Execution Log' embedded inside the Chat Hub history stream.
- * Surfaces every triggered multi-step tool chain (live + persisted in Room) with expandable
- * atomic sub-step status icons (Pending, Executing, Verified, Blocked, Failed), intermediate
- * state piping badges, latency telemetry, background verification proof, and EV-XXXXXX receipts.
+ * Chronological, verifiable 'ToolExecutionLog' embedded inside the Chat Hub history stream.
+ * Displays sequential multi-step tool calls with individual status icons (Pending, Executing,
+ * Verified, Blocked, Failed), live step progress, latency telemetry, and EV-XXXXXX receipts.
  */
+@Composable
+fun ToolExecutionLog(
+    chains: List<ToolChainExecutionSnapshot>,
+    activeChain: ToolChainExecutionSnapshot?,
+    onClearLog: () -> Unit,
+    modifier: Modifier = Modifier,
+    persistedStates: List<ToolChainStateEntity> = emptyList()
+) {
+    ToolExecutionLogHistoryPanel(
+        chains = chains,
+        activeChain = activeChain,
+        onClearLog = onClearLog,
+        modifier = modifier.testTag("tool_execution_log_root"),
+        persistedStates = persistedStates
+    )
+}
+
 @Composable
 fun ToolExecutionLogHistoryPanel(
     chains: List<ToolChainExecutionSnapshot>,
@@ -282,13 +298,28 @@ fun ToolExecutionLogHistoryPanel(
                                     .padding(top = 8.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
+                                val totalSteps = chain.steps.size.coerceAtLeast(1)
+                                val doneSteps = chain.steps.count {
+                                    it.status == ToolStepStatus.EXECUTION_VERIFIED ||
+                                        it.status == ToolStepStatus.FAILED ||
+                                        it.status == ToolStepStatus.BLOCKED
+                                }
+                                LinearProgressIndicator(
+                                    progress = { (doneSteps.toFloat() / totalSteps.toFloat()).coerceIn(0f, 1f) },
+                                    color = chainTint,
+                                    trackColor = MoteBorder,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(4.dp)
+                                        .clip(CircleShape)
+                                )
                                 chain.steps.forEach { step ->
-                                    val (statusColor, statusIcon) = when (step.status) {
-                                        ToolStepStatus.EXECUTION_VERIFIED -> LocalNanoEmerald to Icons.Outlined.CheckCircle
-                                        ToolStepStatus.RUNNING -> CloudFlashCobalt to Icons.Outlined.Sync
-                                        ToolStepStatus.QUEUED -> SlateMuted to Icons.Outlined.Schedule
-                                        ToolStepStatus.BLOCKED -> Color(0xFFD97706) to Icons.Outlined.Block
-                                        ToolStepStatus.FAILED -> Color(0xFFDC2626) to Icons.Outlined.Cancel
+                                    val (statusColor, statusIcon, statusDisplayLabel) = when (step.status) {
+                                        ToolStepStatus.EXECUTION_VERIFIED -> Triple(LocalNanoEmerald, Icons.Outlined.CheckCircle, "Verified")
+                                        ToolStepStatus.RUNNING -> Triple(CloudFlashCobalt, Icons.Outlined.Sync, "Executing")
+                                        ToolStepStatus.QUEUED -> Triple(SlateMuted, Icons.Outlined.HourglassEmpty, "Pending")
+                                        ToolStepStatus.BLOCKED -> Triple(Color(0xFFD97706), Icons.Outlined.Block, "Blocked")
+                                        ToolStepStatus.FAILED -> Triple(Color(0xFFDC2626), Icons.Outlined.ErrorOutline, "Failed")
                                     }
                                     Column(
                                         modifier = Modifier
@@ -326,12 +357,19 @@ fun ToolExecutionLogHistoryPanel(
                                                 overflow = TextOverflow.Ellipsis,
                                                 modifier = Modifier.weight(1f)
                                             )
-                                            Text(
-                                                text = step.status.label,
-                                                fontSize = 9.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = statusColor
-                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(999.dp))
+                                                    .background(statusColor.copy(alpha = 0.14f))
+                                                    .padding(horizontal = 7.dp, vertical = 2.dp)
+                                            ) {
+                                                Text(
+                                                    text = statusDisplayLabel,
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    color = statusColor
+                                                )
+                                            }
                                         }
                                         Row(
                                             modifier = Modifier
@@ -1142,6 +1180,703 @@ fun InChatClipboardWidget(
                     Spacer(Modifier.width(5.dp))
                     Text("Paste Live", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Interactive Phone Dialer card inside Chat Hub (Google Play compliant: uses ACTION_DIAL + optional
+ * Accessibility live-cursor Call button click, SMS composer, and live STT<->TTS Voice Relay).
+ */
+@Composable
+fun InChatPhoneDialerWidget(
+    part: InChatUiPart.PhoneDialerPanel,
+    onOpenDialer: (number: String, label: String?) -> Unit,
+    onClickCallButton: (number: String) -> Unit,
+    onSendSms: (number: String, body: String) -> Unit,
+    onStartVoiceRelay: (targetLabel: String) -> Unit
+) {
+    val context = LocalContext.current
+    val tokens = LocalMoteColors.current
+    val accent = LocalNanoEmerald
+
+    MoteCard(
+        background = tokens.surface,
+        modifier = Modifier
+            .border(
+                width = 1.dp,
+                color = if (part.success) accent.copy(alpha = 0.45f) else Color(0xFFDC2626).copy(alpha = 0.4f),
+                shape = RoundedCornerShape(16.dp)
+            )
+            .testTag("inchat_phone_dialer_widget")
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(accent.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Phone,
+                    contentDescription = "Phone Dialer Tool",
+                    tint = if (part.success) accent else Color(0xFFDC2626),
+                    modifier = Modifier.size(19.dp)
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "PHONE DIALER & CALL",
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = accent
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(if (part.success) Color(0xFFDCFCE7) else Color(0xFFFEE2E2))
+                            .padding(horizontal = 6.dp, vertical = 1.5.dp)
+                    ) {
+                        Text(
+                            text = part.badge,
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (part.success) Color(0xFF15803D) else Color(0xFFB91C1C)
+                        )
+                    }
+                }
+                Text(part.title, fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = MoteNavy)
+                Text(part.summary, fontSize = 11.5.sp, color = SlateMuted, lineHeight = 16.sp)
+            }
+        }
+
+        if (part.phoneNumber.isNotBlank()) {
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MoteSurfaceSubtle)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = part.phoneNumber,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontFamily = FontFamily.Monospace,
+                        color = MoteNavy
+                    )
+                    if (!part.contactLabel.isNullOrBlank()) {
+                        Text(part.contactLabel, fontSize = 11.sp, color = SlateMuted)
+                    }
+                }
+                IconButton(
+                    onClick = {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        cm?.setPrimaryClip(ClipData.newPlainText("Phone Number", part.phoneNumber))
+                        Toast.makeText(context, "Number copied", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.size(40.dp).testTag("inchat_phone_copy_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.ContentCopy,
+                        contentDescription = "Copy phone number",
+                        tint = SlateMuted,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+            }
+        }
+
+        if (part.detailLines.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                part.detailLines.take(4).forEach { line ->
+                    Text("• $line", fontSize = 10.5.sp, color = SlateMuted)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(
+                onClick = { onOpenDialer(part.phoneNumber, part.contactLabel) },
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = accent),
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .testTag("inchat_phone_open_dialer_button")
+            ) {
+                Icon(Icons.Outlined.Dialpad, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("Open Dialer", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            }
+            Button(
+                onClick = { onClickCallButton(part.phoneNumber) },
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = CloudFlashCobalt),
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .testTag("inchat_phone_click_call_button")
+            ) {
+                Icon(Icons.Outlined.AdsClick, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("Click Call", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            }
+        }
+
+        Spacer(Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = { onSendSms(part.phoneNumber, "") },
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .testTag("inchat_phone_sms_button")
+            ) {
+                Icon(Icons.Outlined.Sms, contentDescription = null, tint = MoteNavy, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("Send SMS", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MoteNavy)
+            }
+            OutlinedButton(
+                onClick = {
+                    val label = part.contactLabel?.takeIf { it.isNotBlank() }
+                        ?: part.phoneNumber.ifBlank { "Live Phone Relay" }
+                    onStartVoiceRelay("Call $label")
+                },
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .testTag("inchat_phone_voice_relay_button")
+            ) {
+                Icon(Icons.Outlined.RecordVoiceOver, contentDescription = null, tint = CloudFlashCobalt, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("Live Relay", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = CloudFlashCobalt)
+            }
+        }
+    }
+}
+
+/**
+ * Interactive Wi-Fi & Network Telemetry Card inside Chat Hub.
+ */
+@Composable
+fun InChatNetworkControlWidget(
+    part: InChatUiPart.NetworkStatusPanel,
+    onOpenWifiPanel: () -> Unit,
+    onOpenInternetPanel: () -> Unit,
+    onRunPing: () -> Unit,
+    onRefreshNetwork: () -> Unit
+) {
+    val tokens = LocalMoteColors.current
+    val accent = if (part.isConnected) LocalNanoEmerald else Color(0xFFD97706)
+
+    MoteCard(
+        background = tokens.surface,
+        modifier = Modifier
+            .border(1.dp, accent.copy(alpha = 0.45f), RoundedCornerShape(16.dp))
+            .testTag("inchat_network_control_widget")
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(accent.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (part.isConnected) Icons.Outlined.Wifi else Icons.Outlined.WifiOff,
+                    contentDescription = "Wi-Fi and Network Status",
+                    tint = accent,
+                    modifier = Modifier.size(19.dp)
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "WI-FI & NETWORK TOOLS",
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = accent
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(accent.copy(alpha = 0.16f))
+                            .padding(horizontal = 6.dp, vertical = 1.5.dp)
+                    ) {
+                        Text(
+                            text = part.badge,
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = accent
+                        )
+                    }
+                }
+                Text(part.title, fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = MoteNavy)
+                Text(part.summary, fontSize = 11.5.sp, color = SlateMuted, lineHeight = 16.sp)
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(MoteSurfaceSubtle)
+                .padding(10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = part.wifiSsid?.let { "${part.transportLabel} · $it" } ?: part.transportLabel,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MoteNavy
+                )
+                val metrics = buildList {
+                    part.linkSpeedMbps?.let { add("${it} Mbps") }
+                    part.localIpv4?.let { add("IP $it") }
+                    part.latencyMs?.let { add("Ping ${it}ms") }
+                }.joinToString(" · ")
+                if (metrics.isNotBlank()) {
+                    Text(metrics, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = SlateMuted)
+                }
+            }
+            // Signal bars visual indicator
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                for (bar in 1..4) {
+                    val lit = bar <= part.signalBars
+                    Box(
+                        modifier = Modifier
+                            .width(5.dp)
+                            .height((6 + bar * 4).dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(if (lit) accent else MoteBorder)
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(
+                onClick = onOpenWifiPanel,
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = accent),
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .testTag("inchat_network_wifi_panel_button")
+            ) {
+                Icon(Icons.Outlined.Wifi, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("Wi-Fi Panel", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            }
+            OutlinedButton(
+                onClick = onOpenInternetPanel,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .testTag("inchat_network_internet_panel_button")
+            ) {
+                Text("Internet", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MoteNavy)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = onRunPing,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .testTag("inchat_network_ping_button")
+            ) {
+                Icon(Icons.Outlined.Speed, contentDescription = null, tint = CloudFlashCobalt, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("Ping Test", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = CloudFlashCobalt)
+            }
+            OutlinedButton(
+                onClick = onRefreshNetwork,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .testTag("inchat_network_refresh_button")
+            ) {
+                Icon(Icons.Outlined.Refresh, contentDescription = null, tint = MoteNavy, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("Refresh", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MoteNavy)
+            }
+        }
+    }
+}
+
+/**
+ * Interactive Camera & Hardware Torch Control Card inside Chat Hub.
+ */
+@Composable
+fun InChatCameraControlWidget(
+    part: InChatUiPart.CameraControlPanel,
+    onOpenCamera: (mode: String, facing: String?) -> Unit,
+    onToggleTorch: (enabled: Boolean?) -> Unit,
+    onTriggerShutter: () -> Unit,
+    onInspectHardware: () -> Unit
+) {
+    val tokens = LocalMoteColors.current
+    val accent = Color(0xFFEC4899)
+
+    MoteCard(
+        background = tokens.surface,
+        modifier = Modifier
+            .border(
+                width = 1.dp,
+                color = if (part.success) accent.copy(alpha = 0.45f) else Color(0xFFDC2626).copy(alpha = 0.4f),
+                shape = RoundedCornerShape(16.dp)
+            )
+            .testTag("inchat_camera_control_widget")
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(accent.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.PhotoCamera,
+                    contentDescription = "Camera Control Tool",
+                    tint = accent,
+                    modifier = Modifier.size(19.dp)
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "CAMERA & TORCH · ${part.mode.uppercase(Locale.US)}",
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = accent
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(if (part.success) Color(0xFFDCFCE7) else Color(0xFFFEE2E2))
+                            .padding(horizontal = 6.dp, vertical = 1.5.dp)
+                    ) {
+                        Text(
+                            text = part.badge,
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (part.success) Color(0xFF15803D) else Color(0xFFB91C1C)
+                        )
+                    }
+                }
+                Text(part.title, fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = MoteNavy)
+                Text(part.summary, fontSize = 11.5.sp, color = SlateMuted, lineHeight = 16.sp)
+            }
+        }
+
+        if (part.detailLines.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MoteSurfaceSubtle)
+                    .padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                part.detailLines.take(5).forEach { line ->
+                    Text("• $line", fontSize = 10.5.sp, color = MoteNavy)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Button(
+                onClick = { onOpenCamera("photo", "back") },
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = accent),
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("inchat_camera_photo_button")
+            ) {
+                Text("Photo", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            }
+            OutlinedButton(
+                onClick = { onOpenCamera("selfie", "front") },
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("inchat_camera_selfie_button")
+            ) {
+                Text("Selfie", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MoteNavy)
+            }
+            OutlinedButton(
+                onClick = { onOpenCamera("video", "back") },
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("inchat_camera_video_button")
+            ) {
+                Text("Video", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MoteNavy)
+            }
+        }
+
+        Spacer(Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            OutlinedButton(
+                onClick = { onToggleTorch(null) },
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("inchat_camera_torch_button")
+            ) {
+                Icon(
+                    imageVector = if (part.torchEnabled) Icons.Outlined.FlashlightOn else Icons.Outlined.FlashlightOff,
+                    contentDescription = "Toggle flashlight",
+                    tint = Color(0xFFF59E0B),
+                    modifier = Modifier.size(15.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(if (part.torchEnabled) "Torch Off" else "Torch On", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MoteNavy)
+            }
+            Button(
+                onClick = onTriggerShutter,
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = LocalNanoEmerald),
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("inchat_camera_shutter_button")
+            ) {
+                Icon(Icons.Outlined.Camera, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Shutter", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            }
+            OutlinedButton(
+                onClick = onInspectHardware,
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.heightIn(min = 48.dp).testTag("inchat_camera_specs_button")
+            ) {
+                Text("Specs", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = CloudFlashCobalt)
+            }
+        }
+    }
+}
+
+/**
+ * Interactive Application Control & Live Cursor Hover Card inside Chat Hub.
+ */
+@Composable
+fun InChatAppCursorControlWidget(
+    part: InChatUiPart.AppControlPanel,
+    onHoverAndClickTarget: (target: String) -> Unit,
+    onSwipeScreen: (direction: String) -> Unit,
+    onPreviewCursor: () -> Unit
+) {
+    val tokens = LocalMoteColors.current
+    val accent = Color(0xFF0EA5E9)
+
+    MoteCard(
+        background = tokens.surface,
+        modifier = Modifier
+            .border(
+                width = 1.dp,
+                color = if (part.success) accent.copy(alpha = 0.45f) else Color(0xFFD97706).copy(alpha = 0.45f),
+                shape = RoundedCornerShape(16.dp)
+            )
+            .testTag("inchat_app_cursor_control_widget")
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(accent.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.AdsClick,
+                    contentDescription = "Live Cursor App Control",
+                    tint = accent,
+                    modifier = Modifier.size(19.dp)
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "LIVE CURSOR APP CONTROL",
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = accent
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(if (part.success) Color(0xFFDCFCE7) else Color(0xFFFEF3C7))
+                            .padding(horizontal = 6.dp, vertical = 1.5.dp)
+                    ) {
+                        Text(
+                            text = part.badge,
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (part.success) Color(0xFF15803D) else Color(0xFFB45309)
+                        )
+                    }
+                }
+                Text(part.title, fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = MoteNavy)
+                Text(part.summary, fontSize = 11.5.sp, color = SlateMuted, lineHeight = 16.sp)
+            }
+        }
+
+        if (part.cursorX != null && part.cursorY != null) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "Cursor Telemetry: (${part.cursorX.toInt()}, ${part.cursorY.toInt()}) px${part.targetLabel?.let { " · Target: $it" } ?: ""}",
+                fontSize = 10.5.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.SemiBold,
+                color = accent
+            )
+        }
+
+        if (part.interactiveElements.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "TAP ANY DETECTED ELEMENT TO HOVER & CLICK",
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                color = SlateMuted
+            )
+            Spacer(Modifier.height(5.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                part.interactiveElements.take(6).forEach { elem ->
+                    val targetName = elem.substringBefore(" [").trim().ifBlank { elem }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 40.dp)
+                            .clip(RoundedCornerShape(9.dp))
+                            .background(MoteSurfaceSubtle)
+                            .border(0.6.dp, accent.copy(alpha = 0.3f), RoundedCornerShape(9.dp))
+                            .clickable { onHoverAndClickTarget(targetName) }
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = elem,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MoteNavy,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(
+                            imageVector = Icons.Outlined.TouchApp,
+                            contentDescription = "Hover and click $targetName",
+                            tint = accent,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            if (!part.targetLabel.isNullOrBlank()) {
+                Button(
+                    onClick = { onHoverAndClickTarget(part.targetLabel) },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = accent),
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("inchat_cursor_reclick_button")
+                ) {
+                    Text("Hover & Click", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            }
+            OutlinedButton(
+                onClick = { onSwipeScreen("down") },
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("inchat_cursor_scroll_down_button")
+            ) {
+                Text("Scroll Down", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MoteNavy)
+            }
+            OutlinedButton(
+                onClick = onPreviewCursor,
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.heightIn(min = 48.dp).testTag("inchat_cursor_test_button")
+            ) {
+                Text("Test", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = accent)
             }
         }
     }

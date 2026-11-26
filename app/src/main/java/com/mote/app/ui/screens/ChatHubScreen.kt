@@ -129,14 +129,34 @@ private val starterPrompts = listOf(
         prompt = "Read my clipboard and save it to Notes"
     ),
     StarterPrompt(
-        title = "Phone + Live STT/TTS Relay",
-        subtitle = "Opens Phone dialer then runs real-time Speech-to-Text <-> AI <-> TTS",
-        prompt = "Open phone and call 555-0199 then listen and reply with real-time text to speech"
+        title = "Phone Call + Live Cursor",
+        subtitle = "Opens Phone dialer, hovers & clicks Call, and offers STT<->TTS Relay",
+        prompt = "Open phone and call 555-0199 then click call"
+    ),
+    StarterPrompt(
+        title = "Wi-Fi & Network Ping",
+        subtitle = "Checks live Wi-Fi/signal/IP telemetry and measures real TCP latency",
+        prompt = "Check my Wi-Fi status and run a network ping test"
+    ),
+    StarterPrompt(
+        title = "Camera → Cursor Shutter",
+        subtitle = "Opens Camera and triggers shutter with real-time animated cursor",
+        prompt = "Open camera and take a photo using cursor shutter"
+    ),
+    StarterPrompt(
+        title = "Live Cursor Control",
+        subtitle = "Inspects foreground UI nodes & hovers live cursor over target elements",
+        prompt = "Inspect screen buttons with live cursor"
     ),
     StarterPrompt(
         title = "Set 7:30 AM Alarm",
         subtitle = "Real-time AI alarm creation with background AlarmManager verification",
         prompt = "Create an alarm for 7:30 AM on weekdays labeled Morning Standup"
+    ),
+    StarterPrompt(
+        title = "Start Stopwatch",
+        subtitle = "Starts live stopwatch stream with lap & pause controls in chat",
+        prompt = "Start the stopwatch now"
     ),
     StarterPrompt(
         title = "5m Focus Timer",
@@ -196,6 +216,9 @@ fun ChatHubScreen(
     val toolChainStates by viewModel.toolChainStates.collectAsStateWithLifecycle()
     val capturedScreenshots by viewModel.capturedScreenshots.collectAsStateWithLifecycle()
     val inChatUiPartsByText by viewModel.inChatUiPartsByText.collectAsStateWithLifecycle()
+    val networkStatus by viewModel.networkStatus.collectAsStateWithLifecycle()
+    val overlayCustomization by viewModel.overlayCustomization.collectAsStateWithLifecycle()
+    val toolPermissions by viewModel.toolPermissions.collectAsStateWithLifecycle()
 
     val executor = remember(context) { DeviceActionExecutor(context) }
     val bots = (botsState as? BotsUiState.Success)?.bots.orEmpty()
@@ -601,9 +624,38 @@ fun ChatHubScreen(
                 }
             }
 
+            if (overlayCustomization.showLiveQuickWidgets) {
+                item(key = "chat_advanced_live_widgets_deck") {
+                    AdvancedLiveWidgetsDeck(
+                        alarms = clockAlarms,
+                        timers = clockTimers,
+                        stopwatch = clockStopwatch,
+                        network = networkStatus,
+                        accessibilityReady = toolPermissions.accessibilityGranted,
+                        onStartStopwatch = {
+                            viewModel.controlClockStopwatch(if (clockStopwatch.isRunning) "pause" else "start")
+                        },
+                        onLapStopwatch = { viewModel.controlClockStopwatch("lap") },
+                        onStartQuickTimer5m = { viewModel.startQuickClockTimer(300, "5m Focus") },
+                        onQuickAlarm10m = { viewModel.createQuickRelativeAlarm(10, "Quick 10m Alarm") },
+                        onOpenWifiPanel = { viewModel.openWifiPanelQuick() },
+                        onRunNetworkPing = { viewModel.runNetworkPingQuick() },
+                        onRefreshNetwork = { viewModel.refreshNetworkStatusQuick() },
+                        onOpenCameraPhoto = { viewModel.openCameraQuick("photo", "back") },
+                        onOpenCameraSelfie = { viewModel.openCameraQuick("selfie", "front") },
+                        onOpenCameraVideo = { viewModel.openCameraQuick("video", "back") },
+                        onToggleTorch = { viewModel.toggleFlashlightQuick(null) },
+                        onTriggerCameraShutter = { viewModel.triggerCameraShutterQuick() },
+                        onPreviewCursor = { viewModel.previewLiveCursorDemo() },
+                        onSwipeDown = { viewModel.swipeScreenQuick("down") },
+                        onSwipeUp = { viewModel.swipeScreenQuick("up") }
+                    )
+                }
+            }
+
             if (toolChainHistory.isNotEmpty() || activeToolChain != null) {
                 item(key = "chat_tool_execution_log_panel") {
-                    ToolExecutionLogHistoryPanel(
+                    ToolExecutionLog(
                         chains = toolChainHistory,
                         activeChain = activeToolChain,
                         persistedStates = toolChainStates,
@@ -634,10 +686,12 @@ fun ChatHubScreen(
                             onToggleAlarm = { id, enabled -> viewModel.toggleClockAlarm(id, enabled) },
                             onShiftAlarmMinutes = { id, delta -> viewModel.shiftClockAlarmMinutes(id, delta) },
                             onDeleteAlarm = { id -> viewModel.deleteClockAlarm(id) },
+                            onSyncAlarmToSystem = { alarm -> viewModel.syncClockAlarmToAndroid(alarm) },
                             onControlTimer = { action, timerId -> viewModel.controlClockTimer(action, timerId) },
                             onAddTimerSeconds = { timerId, extra -> viewModel.addSecondsToClockTimer(timerId, extra) },
                             onControlStopwatch = { action -> viewModel.controlClockStopwatch(action) },
                             onDeleteCalendarEvent = { id -> viewModel.deleteCalendarEvent(id) },
+                            onSyncCalendarEventToSystem = { ev -> viewModel.syncCalendarEventToAndroid(ev) },
                             onExecuteGenUiAction = { action -> executor.execute(action) },
                             onAnalyzeScreenshot = { capId, prompt ->
                                 viewModel.analyzeCapturedScreenshot(capId, prompt, selectedBot)
@@ -648,7 +702,22 @@ fun ChatHubScreen(
                             onStopVoiceRelay = { viewModel.stopVoiceRelay() },
                             onSubmitVoiceRelayText = { heard -> viewModel.submitVoiceRelayUtterance(heard) },
                             onCopyClipboardText = { txt -> viewModel.writeToSystemClipboard(txt) },
-                            onPasteClipboardText = { txt -> viewModel.pasteClipboardToFocusedField(txt) }
+                            onPasteClipboardText = { txt -> viewModel.pasteClipboardToFocusedField(txt) },
+                            onOpenDialer = { num, label -> viewModel.dialNumberQuick(num, label) },
+                            onClickDialerCallButton = { num -> viewModel.clickDialerCallButtonQuick(num) },
+                            onSendSms = { num, body -> viewModel.sendSmsQuick(num, body) },
+                            onStartVoiceRelay = { label -> viewModel.startVoiceCallRelay(label) },
+                            onOpenWifiPanel = { viewModel.openWifiPanelQuick() },
+                            onOpenInternetPanel = { viewModel.openInternetPanelQuick() },
+                            onRunNetworkPing = { viewModel.runNetworkPingQuick() },
+                            onRefreshNetwork = { viewModel.refreshNetworkStatusQuick() },
+                            onOpenCamera = { mode, facing -> viewModel.openCameraQuick(mode, facing) },
+                            onToggleTorch = { enabled -> viewModel.toggleFlashlightQuick(enabled) },
+                            onTriggerCameraShutter = { viewModel.triggerCameraShutterQuick() },
+                            onInspectCameraHardware = { viewModel.inspectCameraHardwareQuick() },
+                            onHoverAndClickTarget = { target -> viewModel.hoverAndClickQuick(target) },
+                            onSwipeScreen = { dir -> viewModel.swipeScreenQuick(dir) },
+                            onPreviewCursor = { viewModel.previewLiveCursorDemo() }
                         )
                     }
                 }
@@ -679,10 +748,12 @@ fun ChatHubScreen(
                                 onToggleAlarm = { id, enabled -> viewModel.toggleClockAlarm(id, enabled) },
                                 onShiftAlarmMinutes = { id, delta -> viewModel.shiftClockAlarmMinutes(id, delta) },
                                 onDeleteAlarm = { id -> viewModel.deleteClockAlarm(id) },
+                                onSyncAlarmToSystem = { alarm -> viewModel.syncClockAlarmToAndroid(alarm) },
                                 onControlTimer = { action, timerId -> viewModel.controlClockTimer(action, timerId) },
                                 onAddTimerSeconds = { timerId, extra -> viewModel.addSecondsToClockTimer(timerId, extra) },
                                 onControlStopwatch = { action -> viewModel.controlClockStopwatch(action) },
                                 onDeleteCalendarEvent = { id -> viewModel.deleteCalendarEvent(id) },
+                                onSyncCalendarEventToSystem = { ev -> viewModel.syncCalendarEventToAndroid(ev) },
                                 onExecuteGenUiAction = { action -> executor.execute(action) },
                                 onAnalyzeScreenshot = { capId, prompt ->
                                     viewModel.analyzeCapturedScreenshot(capId, prompt, selectedBot)
@@ -693,7 +764,22 @@ fun ChatHubScreen(
                                 onStopVoiceRelay = { viewModel.stopVoiceRelay() },
                                 onSubmitVoiceRelayText = { heard -> viewModel.submitVoiceRelayUtterance(heard) },
                                 onCopyClipboardText = { txt -> viewModel.writeToSystemClipboard(txt) },
-                                onPasteClipboardText = { txt -> viewModel.pasteClipboardToFocusedField(txt) }
+                                onPasteClipboardText = { txt -> viewModel.pasteClipboardToFocusedField(txt) },
+                                onOpenDialer = { num, label -> viewModel.dialNumberQuick(num, label) },
+                                onClickDialerCallButton = { num -> viewModel.clickDialerCallButtonQuick(num) },
+                                onSendSms = { num, body -> viewModel.sendSmsQuick(num, body) },
+                                onStartVoiceRelay = { label -> viewModel.startVoiceCallRelay(label) },
+                                onOpenWifiPanel = { viewModel.openWifiPanelQuick() },
+                                onOpenInternetPanel = { viewModel.openInternetPanelQuick() },
+                                onRunNetworkPing = { viewModel.runNetworkPingQuick() },
+                                onRefreshNetwork = { viewModel.refreshNetworkStatusQuick() },
+                                onOpenCamera = { mode, facing -> viewModel.openCameraQuick(mode, facing) },
+                                onToggleTorch = { enabled -> viewModel.toggleFlashlightQuick(enabled) },
+                                onTriggerCameraShutter = { viewModel.triggerCameraShutterQuick() },
+                                onInspectCameraHardware = { viewModel.inspectCameraHardwareQuick() },
+                                onHoverAndClickTarget = { target -> viewModel.hoverAndClickQuick(target) },
+                                onSwipeScreen = { dir -> viewModel.swipeScreenQuick(dir) },
+                                onPreviewCursor = { viewModel.previewLiveCursorDemo() }
                             )
                         }
                     }
@@ -763,7 +849,7 @@ fun ChatHubScreen(
             when (val cardState = aiCardState) {
                 is AiCardUiState.Loading -> {
                     item(key = "genui_loading") {
-                        MoteCard(background = Color.White) {
+                        MoteCard(background = tokens.surface) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)

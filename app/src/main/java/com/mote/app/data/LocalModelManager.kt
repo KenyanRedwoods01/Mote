@@ -30,6 +30,7 @@ import com.mote.app.control.ClipboardToolsManager
 import com.mote.app.control.ClockToolsManager
 import com.mote.app.control.DeviceAutomationToolsManager
 import com.mote.app.control.LiveVoiceCallBridge
+import com.mote.app.control.NetworkToolsManager
 import com.mote.app.control.NotesToolsManager
 import com.mote.app.control.SystemHealthManager
 import com.mote.app.control.ToolPermissionInspector
@@ -197,7 +198,7 @@ data class ModelCacheClearSummary(
  */
 class LocalModelManager(context: Context) {
 
-    private val appContext = context.applicationContext
+    val appContext: Context = context.applicationContext
     private val modelsDir = File(appContext.filesDir, "models").apply { mkdirs() }
     private val db = LocalModelDatabase.getInstance(appContext)
     private val dao = db.localModelDao()
@@ -215,6 +216,7 @@ class LocalModelManager(context: Context) {
     val deviceTools = DeviceAutomationToolsManager(appContext)
     val notesTools = NotesToolsManager(appContext)
     val clipboardTools = ClipboardToolsManager(appContext)
+    val networkTools = NetworkToolsManager(appContext)
     val voiceCallBridge = LiveVoiceCallBridge(appContext, internalAiRouter)
 
     private val _loadedModel = MutableStateFlow<LoadedLocalModelState?>(null)
@@ -264,6 +266,7 @@ class LocalModelManager(context: Context) {
         notesTools = notesTools,
         voiceCallBridge = voiceCallBridge,
         clipboardTools = clipboardTools,
+        networkTools = networkTools,
         aiRouter = internalAiRouter,
         dao = dao,
         scope = scope,
