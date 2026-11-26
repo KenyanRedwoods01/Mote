@@ -85,6 +85,30 @@ sealed interface InChatUiPart {
         override val partId: String,
         val snapshot: ToolChainExecutionSnapshot
     ) : InChatUiPart
+
+    data class OcrResultPanel(
+        override val partId: String,
+        val title: String,
+        val extractedText: String,
+        val sourceLabel: String,
+        val captureId: String? = null,
+        val success: Boolean = true
+    ) : InChatUiPart
+
+    data class NotesPanel(
+        override val partId: String,
+        val actionSummary: String,
+        val highlightNoteId: String? = null,
+        val success: Boolean = true
+    ) : InChatUiPart
+
+    data class VoiceCallRelayPanel(
+        override val partId: String,
+        val title: String,
+        val summary: String,
+        val targetLabel: String,
+        val success: Boolean = true
+    ) : InChatUiPart
 }
 
 @Serializable
@@ -125,9 +149,11 @@ object ChatGenUiToolProtocol {
         }
 
         appendLine("REAL-TIME AUTOMATIC DEVICE TOOLS & SEQUENTIAL CHAINING PROTOCOL (CRITICAL ENGINE VERIFICATION RULES):")
-        appendLine("1. MANDATORY EXECUTION PROOF: You MUST emit a $OPEN_TAG...$CLOSE_TAG block on EVERY turn where the user requests ANY action (alarms, timers, stopwatch, calendar, camera, flashlight, screenshot, sharing, opening apps, navigation). NEVER say 'Done', 'Set', 'Created', or 'Opened' in plain text without emitting the matching $OPEN_TAG block in THIS EXACT response — prior chat messages omit tool tags, so always emit fresh tags!")
-        appendLine("2. MULTI-STEP SEQUENTIAL TOOL CHAINS: When the user asks for multiple dependent steps (e.g. 'Take a screenshot and share it on WhatsApp' or 'Set a 7am alarm and start a 5m timer'), emit multiple $OPEN_TAG...$CLOSE_TAG blocks in exact execution order OR use runToolChain. Downstream steps automatically inherit intermediate outputs like \$lastSavedUri and \$lastCaptureId.")
-        appendLine("   Example chain: $OPEN_TAG{\"tool\":\"takeScreenshot\",\"args\":{\"label\":\"Share Snapshot\"}}$CLOSE_TAG $OPEN_TAG{\"tool\":\"shareToApp\",\"args\":{\"appName\":\"WhatsApp\",\"mediaUri\":\"\$lastSavedUri\",\"text\":\"Check out this screenshot\"}}$CLOSE_TAG")
+        appendLine("1. MANDATORY EXECUTION PROOF: You MUST emit a $OPEN_TAG...$CLOSE_TAG block on EVERY turn where the user requests ANY action (alarms, timers, stopwatch, calendar, camera, flashlight, screenshot, OCR, notes, sharing, opening apps, Chrome/YouTube search, dialing phone, live voice call relay, navigation). NEVER say 'Done', 'Set', 'Created', 'Saved', or 'Opened' in plain text without emitting the matching $OPEN_TAG block in THIS EXACT response!")
+        appendLine("2. MULTI-STEP SEQUENTIAL TOOL CHAINS: Emit multiple $OPEN_TAG...$CLOSE_TAG blocks in exact execution order OR use runToolChain. Downstream steps automatically inherit intermediate state outputs (\$lastCaptureId, \$lastSavedUri, \$lastExtractedText, \$lastOpenedApp, \$lastDialedNumber).")
+        appendLine("   Example 1 (Screenshot -> OCR -> Notes): $OPEN_TAG{\"tool\":\"takeScreenshot\",\"args\":{\"label\":\"OCR Capture\"}}$CLOSE_TAG $OPEN_TAG{\"tool\":\"ocrAnalysis\",\"args\":{\"captureId\":\"\$lastCaptureId\"}}$CLOSE_TAG $OPEN_TAG{\"tool\":\"saveNote\",\"args\":{\"title\":\"Screen OCR Note\",\"content\":\"\$lastExtractedText\"}}$CLOSE_TAG")
+        appendLine("   Example 2 (Chrome + Search with Siri overlay): $OPEN_TAG{\"tool\":\"searchInApp\",\"args\":{\"appName\":\"Chrome\",\"query\":\"Android AI news\"}}$CLOSE_TAG")
+        appendLine("   Example 3 (Phone + Real-Time STT/TTS Voice Relay): $OPEN_TAG{\"tool\":\"dialPhone\",\"args\":{\"phoneNumber\":\"5550199\"}}$CLOSE_TAG $OPEN_TAG{\"tool\":\"startVoiceCallRelay\",\"args\":{\"targetLabel\":\"Call 5550199\",\"openingGreeting\":\"Hello, this is Mote assistant calling on behalf of my user.\"}}$CLOSE_TAG")
         appendLine("3. Never wrap $OPEN_TAG in markdown code fences. Always keep your visible confirmation concise (1-2 sentences).")
         appendLine()
 
@@ -176,19 +202,34 @@ object ChatGenUiToolProtocol {
         }
 
         if (GenUiToolRegistry.TOOL_SCREEN_CAPTURE in enabledToolIds) {
-            appendLine("MEDIAPROJECTION SCREEN CAPTURE TOOL (explicit user-authorized screenshot surfaced as a Bitmap in chat for visual analysis):")
+            appendLine("MEDIAPROJECTION SCREEN CAPTURE & OCR ANALYSIS TOOL:")
             appendLine("- takeScreenshot: $OPEN_TAG{\"tool\":\"takeScreenshot\",\"args\":{\"label\":\"Screen Capture\",\"analyze\":false}}$CLOSE_TAG")
-            appendLine("- captureAndAnalyzeScreen (takes MediaProjection screenshot AND immediately runs visual AI analysis on the bitmap): $OPEN_TAG{\"tool\":\"captureAndAnalyzeScreen\",\"args\":{\"label\":\"Visual Check\",\"analysisPrompt\":\"Describe everything visible on this screen and highlight key details.\"}}$CLOSE_TAG")
+            appendLine("- ocrAnalysis (extracts all readable text from \$lastCaptureId or active screen via Gemini Vision OCR): $OPEN_TAG{\"tool\":\"ocrAnalysis\",\"args\":{\"captureId\":\"\$lastCaptureId\"}}$CLOSE_TAG")
+            appendLine("- captureAndAnalyzeScreen: $OPEN_TAG{\"tool\":\"captureAndAnalyzeScreen\",\"args\":{\"label\":\"Visual Check\",\"analysisPrompt\":\"Describe everything visible on this screen.\"}}$CLOSE_TAG")
             appendLine("- captureScreenContext: $OPEN_TAG{\"tool\":\"captureScreenContext\",\"args\":{}}$CLOSE_TAG")
             appendLine()
         }
 
+        appendLine("NOTES STORAGE TOOL (persists notes & OCR output into Room DB):")
+        appendLine("- saveNote: $OPEN_TAG{\"tool\":\"saveNote\",\"args\":{\"title\":\"Screen OCR Note\",\"content\":\"\$lastExtractedText\",\"source\":\"OCR Chain\"}}$CLOSE_TAG")
+        appendLine("- listNotes: $OPEN_TAG{\"tool\":\"listNotes\",\"args\":{}}$CLOSE_TAG")
+        appendLine("- deleteNote: $OPEN_TAG{\"tool\":\"deleteNote\",\"args\":{\"query\":\"Screen OCR Note\"}}$CLOSE_TAG")
+        appendLine()
+
+        appendLine("PHONE & REAL-TIME VOICE CALL RELAY TOOL (ACTION_DIAL + free Google STT <-> AI <-> Android TTS continuous loop):")
+        appendLine("- dialPhone: $OPEN_TAG{\"tool\":\"dialPhone\",\"args\":{\"phoneNumber\":\"5550199\",\"contactLabel\":\"Support\"}}$CLOSE_TAG")
+        appendLine("- startVoiceCallRelay (listens continuously via Google Speech-to-Text and replies aloud via Android Text-to-Speech): $OPEN_TAG{\"tool\":\"startVoiceCallRelay\",\"args\":{\"targetLabel\":\"Call Relay\",\"instruction\":\"Answer politely in 1 sentence\",\"openingGreeting\":\"Hello, Mote AI assistant here.\"}}$CLOSE_TAG")
+        appendLine("- speakText: $OPEN_TAG{\"tool\":\"speakText\",\"args\":{\"text\":\"Hello, I will be there in 5 minutes.\"}}$CLOSE_TAG")
+        appendLine("- stopVoiceCallRelay: $OPEN_TAG{\"tool\":\"stopVoiceCallRelay\",\"args\":{}}$CLOSE_TAG")
+        appendLine()
+
         if (GenUiToolRegistry.TOOL_APP_LAUNCHER in enabledToolIds) {
             appendLine("APP NAVIGATION & SHARING TOOL (UsageStatsManager + PackageManager Manifest + Intent launching/sharing):")
-            appendLine("- openApp: $OPEN_TAG{\"tool\":\"openApp\",\"args\":{\"appName\":\"YouTube\"}}$CLOSE_TAG (opens Chrome, YouTube, Gmail, Maps, WhatsApp, Spotify, or any app in the Installed Apps Manifest)")
-            appendLine("- shareToApp (shares a screenshot URI or text directly to WhatsApp, Telegram, Gmail, Messages, etc.): $OPEN_TAG{\"tool\":\"shareToApp\",\"args\":{\"appName\":\"WhatsApp\",\"mediaUri\":\"\$lastSavedUri\",\"text\":\"Here is the screenshot\"}}$CLOSE_TAG")
-            appendLine("- openRecentApp (re-opens most recently used app via UsageStatsManager): $OPEN_TAG{\"tool\":\"openRecentApp\",\"args\":{\"index\":0}}$CLOSE_TAG")
-            appendLine("- getRecentApps (lists recently used apps with UsageStats foreground time): $OPEN_TAG{\"tool\":\"getRecentApps\",\"args\":{\"limit\":8}}$CLOSE_TAG")
+            appendLine("- openApp: $OPEN_TAG{\"tool\":\"openApp\",\"args\":{\"appName\":\"YouTube\"}}$CLOSE_TAG (opens Chrome, YouTube, Gmail, Maps, WhatsApp, Spotify, Phone, or any app)")
+            appendLine("- searchInApp (opens Chrome, YouTube, Maps, Play Store, Spotify, or Amazon directly to a search query with the animated Siri overlay): $OPEN_TAG{\"tool\":\"searchInApp\",\"args\":{\"appName\":\"Chrome\",\"query\":\"latest Android AI\"}}$CLOSE_TAG")
+            appendLine("- shareToApp: $OPEN_TAG{\"tool\":\"shareToApp\",\"args\":{\"appName\":\"WhatsApp\",\"mediaUri\":\"\$lastSavedUri\",\"text\":\"Here is the screenshot\"}}$CLOSE_TAG")
+            appendLine("- openRecentApp: $OPEN_TAG{\"tool\":\"openRecentApp\",\"args\":{\"index\":0}}$CLOSE_TAG")
+            appendLine("- getRecentApps: $OPEN_TAG{\"tool\":\"getRecentApps\",\"args\":{\"limit\":8}}$CLOSE_TAG")
             appendLine("- listInstalledApps: $OPEN_TAG{\"tool\":\"listInstalledApps\",\"args\":{\"query\":\"\"}}$CLOSE_TAG")
             appendLine()
         }

@@ -138,3 +138,27 @@ data class ToolExecutionLogEntity(
     val blocked: Boolean,
     val feedback: String
 )
+
+@Entity(tableName = "saved_notes")
+data class SavedNoteEntity(
+    @PrimaryKey val id: String,
+    val title: String,
+    val content: String,
+    val sourceTag: String = "Mote AI",
+    val createdAtEpochMs: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "tool_chain_runs")
+data class ToolChainRunEntity(
+    @PrimaryKey val chainId: String,
+    val chainTitle: String,
+    val promptSummary: String,
+    val startedAtEpochMs: Long,
+    val completedAtEpochMs: Long,
+    val totalSteps: Int,
+    val verifiedSteps: Int,
+    val failedSteps: Int,
+    val allVerified: Boolean,
+    val stepsJson: String
+)
+

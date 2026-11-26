@@ -170,4 +170,29 @@ interface LocalModelDao {
 
     @Query("DELETE FROM tool_execution_logs")
     suspend fun clearAllToolLogs()
+
+    @Query("SELECT * FROM saved_notes ORDER BY createdAtEpochMs DESC LIMIT 100")
+    fun observeAllNotes(): Flow<List<SavedNoteEntity>>
+
+    @Query("SELECT * FROM saved_notes ORDER BY createdAtEpochMs DESC")
+    suspend fun getAllNotesOnce(): List<SavedNoteEntity>
+
+    @Query("SELECT * FROM saved_notes WHERE id = :noteId LIMIT 1")
+    suspend fun getNoteById(noteId: String): SavedNoteEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertNote(note: SavedNoteEntity)
+
+    @Query("DELETE FROM saved_notes WHERE id = :noteId")
+    suspend fun deleteNoteById(noteId: String)
+
+    @Query("SELECT * FROM tool_chain_runs ORDER BY startedAtEpochMs DESC LIMIT 60")
+    fun observeToolChainRuns(): Flow<List<ToolChainRunEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertToolChainRun(run: ToolChainRunEntity)
+
+    @Query("DELETE FROM tool_chain_runs")
+    suspend fun clearToolChainRuns()
 }
+

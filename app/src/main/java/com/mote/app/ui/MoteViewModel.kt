@@ -44,9 +44,13 @@ import com.mote.app.data.db.CalendarEventEntity
 import com.mote.app.data.db.ClockAlarmEntity
 import com.mote.app.data.db.ModelBenchmarkEntity
 import com.mote.app.data.db.ModelStudioPrefsEntity
+import com.mote.app.data.db.SavedNoteEntity
 import com.mote.app.model.BotPersona
 import com.mote.app.model.ChatMessage
 import com.mote.app.model.ChatRole
+import com.mote.app.service.LiveVoiceRelayUiState
+import com.mote.app.service.SystemOverlayHudState
+import com.mote.app.service.SystemOverlayStateBus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -140,14 +144,18 @@ class MoteViewModel(
     val batteryTelemetry: StateFlow<BatteryTelemetrySnapshot> = localModelManager.batteryTelemetry
     val systemHealth: StateFlow<SystemHealthSnapshot> = localModelManager.systemHealth.health
     val activeToolChain: StateFlow<ToolChainExecutionSnapshot?> = localModelManager.toolOrchestrator.activeChain
+    val toolChainHistory: StateFlow<List<ToolChainExecutionSnapshot>> = localModelManager.toolOrchestrator.chainHistoryLog
     val allBenchmarks: StateFlow<List<ModelBenchmarkEntity>> = localModelManager.allBenchmarks
     val liveBenchmark: StateFlow<LiveBenchmarkProgress?> = localModelManager.liveBenchmark
 
-    // Live Clock, Calendar & Generative UI Tool Registry state
+    // Live Clock, Calendar, Notes, Voice Call Relay & Generative UI Tool Registry state
     val clockAlarms: StateFlow<List<ClockAlarmEntity>> = localModelManager.clockTools.alarms
     val clockTimers: StateFlow<List<CountdownTimerItem>> = localModelManager.clockTools.timers
     val clockStopwatch: StateFlow<StopwatchUiState> = localModelManager.clockTools.stopwatch
     val calendarEvents: StateFlow<List<CalendarEventEntity>> = localModelManager.calendarTools.events
+    val savedNotes: StateFlow<List<SavedNoteEntity>> = localModelManager.notesTools.notes
+    val voiceRelayState: StateFlow<LiveVoiceRelayUiState> = localModelManager.voiceCallBridge.state
+    val systemOverlayState: StateFlow<SystemOverlayHudState> = SystemOverlayStateBus.state
     val capturedScreenshots: StateFlow<Map<String, Bitmap>> = localModelManager.deviceTools.capturedScreenshots
     val isCheckingModelUpdates: StateFlow<Boolean> = localModelManager.isCheckingModelUpdates
     val registeredTools: List<RegisteredToolDescriptor> = localModelManager.toolRegistry.registeredDescriptors()
@@ -678,6 +686,8 @@ class MoteViewModel(
                     appendLine()
                     appendLine(localModelManager.calendarTools.buildCalendarContextForAi())
                     appendLine()
+                    appendLine(localModelManager.notesTools.buildNotesContextForAi())
+                    appendLine()
                     appendLine(localModelManager.deviceTools.buildDeviceContextForAi())
                 }.trim()
                 val enabledToolIds = localModelManager.toolRegistry.enabledToolIds(studioPrefs.value)
@@ -803,6 +813,7 @@ class MoteViewModel(
                     val runResult = localModelManager.toolOrchestrator.executeChain(
                         rawInvocations = plannedInvocations,
                         chainTitle = chainTitle,
+                        promptSummary = effectivePrompt,
                         onProgress = { progressSnap ->
                             val activeStep = progressSnap.steps.firstOrNull {
                                 it.status == com.mote.app.ai.ToolStepStatus.RUNNING
@@ -848,6 +859,9 @@ class MoteViewModel(
                         is InChatUiPart.CalendarEventsPanel -> firstPart.actionSummary
                         is InChatUiPart.DeviceActionPanel -> firstPart.summary
                         is InChatUiPart.ScreenCapturePanel -> firstPart.summary
+                        is InChatUiPart.OcrResultPanel -> firstPart.title
+                        is InChatUiPart.NotesPanel -> firstPart.actionSummary
+                        is InChatUiPart.VoiceCallRelayPanel -> firstPart.summary
                         is InChatUiPart.GenUiCardPart -> firstPart.spec.title
                         is InChatUiPart.ToolStatusBanner -> firstPart.message
                         null -> ""
@@ -1004,6 +1018,43 @@ class MoteViewModel(
             _chatStreamState.value = ChatStreamUiState.Idle
             _lastMetrics.value = null
         }
+    }
+
+    fun clearToolChainHistory() {
+        localModelManager.toolOrchestrator.clearChainHistory()
+    }
+
+    fun deleteSavedNote(noteId: String) {
+        viewModelScope.launch {
+            localModelManager.notesTools.deleteNoteById(noteId)
+        }
+    }
+
+    fun saveOcrTextAsNote(title: String, content: String) {
+        viewModelScope.launch {
+            val res = localModelManager.notesTools.saveNote(
+                title = title,
+                content = content,
+                source = "OCR Quick Save"
+            )
+            _utilityStatus.value = res.summary
+        }
+    }
+
+    fun startVoiceCallRelay(targetLabel: String = "Live Voice Relay") {
+        localModelManager.voiceCallBridge.startRelay(targetLabel = targetLabel)
+    }
+
+    fun toggleVoiceRelayPause() {
+        localModelManager.voiceCallBridge.togglePause()
+    }
+
+    fun stopVoiceRelay() {
+        localModelManager.voiceCallBridge.stopRelay()
+    }
+
+    fun submitVoiceRelayUtterance(heardText: String) {
+        localModelManager.voiceCallBridge.submitHeardUtterance(heardText)
     }
 
     fun clearActionError() {

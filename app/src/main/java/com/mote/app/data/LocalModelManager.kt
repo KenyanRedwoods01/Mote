@@ -15,6 +15,7 @@ import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.mote.app.ai.ChatStreamEvent
 import com.mote.app.ai.GenUiToolRegistry
+import com.mote.app.ai.HybridAiRouter
 import com.mote.app.ai.InferenceMetrics
 import com.mote.app.ai.LiteRtDiagnosticLogEntry
 import com.mote.app.ai.LiteRtDiagnosticLogger
@@ -27,6 +28,8 @@ import com.mote.app.control.BatteryTelemetrySnapshot
 import com.mote.app.control.CalendarToolsManager
 import com.mote.app.control.ClockToolsManager
 import com.mote.app.control.DeviceAutomationToolsManager
+import com.mote.app.control.LiveVoiceCallBridge
+import com.mote.app.control.NotesToolsManager
 import com.mote.app.control.SystemHealthManager
 import com.mote.app.control.ToolPermissionInspector
 import com.mote.app.control.ToolPermissionsSnapshot
@@ -204,10 +207,13 @@ class LocalModelManager(context: Context) {
     val diagnosticLogs: StateFlow<List<LiteRtDiagnosticLogEntry>> = diagnosticLogger.logs
     val diagnosticSummary: StateFlow<LiteRtDiagnosticSummary> = diagnosticLogger.summary
     private val batteryMonitor = BatteryResourceMonitor(appContext)
+    private val internalAiRouter = HybridAiRouter()
     val systemHealth = SystemHealthManager(appContext)
     val clockTools = ClockToolsManager(appContext)
     val calendarTools = CalendarToolsManager(appContext)
     val deviceTools = DeviceAutomationToolsManager(appContext)
+    val notesTools = NotesToolsManager(appContext)
+    val voiceCallBridge = LiveVoiceCallBridge(appContext, internalAiRouter)
 
     private val _loadedModel = MutableStateFlow<LoadedLocalModelState?>(null)
     val loadedModel: StateFlow<LoadedLocalModelState?> = _loadedModel.asStateFlow()
@@ -253,6 +259,9 @@ class LocalModelManager(context: Context) {
         clockTools = clockTools,
         calendarTools = calendarTools,
         deviceTools = deviceTools,
+        notesTools = notesTools,
+        voiceCallBridge = voiceCallBridge,
+        aiRouter = internalAiRouter,
         dao = dao,
         scope = scope,
         isToolEnabledProvider = { toolId ->
@@ -272,7 +281,11 @@ class LocalModelManager(context: Context) {
         }
     )
 
-    val toolOrchestrator = SequentialToolOrchestrator(toolRegistry)
+    val toolOrchestrator = SequentialToolOrchestrator(
+        toolRegistry = toolRegistry,
+        dao = dao,
+        scope = scope
+    )
 
     private val _toolPermissions = MutableStateFlow(ToolPermissionInspector.inspect(appContext))
     val toolPermissions: StateFlow<ToolPermissionsSnapshot> = _toolPermissions.asStateFlow()
@@ -908,6 +921,7 @@ class LocalModelManager(context: Context) {
         _loadedModel.value = null
         batteryMonitor.stop()
         systemHealth.shutdown()
+        voiceCallBridge.shutdown()
         clockTools.stopAllTickers()
     }
 

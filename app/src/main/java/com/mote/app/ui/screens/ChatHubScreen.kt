@@ -4,10 +4,12 @@ import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.provider.Settings
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -49,6 +51,7 @@ import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Event
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.GraphicEq
+import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -89,6 +92,7 @@ import com.mote.app.control.StopwatchUiState
 import com.mote.app.model.BotPersona
 import com.mote.app.model.ChatMessage
 import com.mote.app.model.ChatRole
+import com.mote.app.service.SystemOverlayStateBus
 import com.mote.app.ui.AiCardUiState
 import com.mote.app.ui.BotsUiState
 import com.mote.app.ui.ChatHistoryUiState
@@ -110,8 +114,23 @@ private data class StarterPrompt(
 
 private val starterPrompts = listOf(
     StarterPrompt(
+        title = "Screenshot → OCR → Notes",
+        subtitle = "3-step atomic chain: MediaProjection -> Vision OCR -> Save to Room Notes",
+        prompt = "Take a screenshot -> OCR analysis -> Save to Notes"
+    ),
+    StarterPrompt(
+        title = "Open Chrome & Search",
+        subtitle = "Launches Chrome search with live animated Siri system overlay",
+        prompt = "Open Chrome and search latest Android AI news"
+    ),
+    StarterPrompt(
+        title = "Phone + Live STT/TTS Relay",
+        subtitle = "Opens Phone dialer then runs real-time Speech-to-Text <-> AI <-> TTS",
+        prompt = "Open phone and call 555-0199 then listen and reply with real-time text to speech"
+    ),
+    StarterPrompt(
         title = "Set 7:30 AM Alarm",
-        subtitle = "Real-time AI alarm creation with live toggle & edit",
+        subtitle = "Real-time AI alarm creation with background AlarmManager verification",
         prompt = "Create an alarm for 7:30 AM on weekdays labeled Morning Standup"
     ),
     StarterPrompt(
@@ -125,34 +144,9 @@ private val starterPrompts = listOf(
         prompt = "Add a calendar event for tomorrow from 2:00 PM to 3:00 PM titled Product Sync in Room 4B"
     ),
     StarterPrompt(
-        title = "Start Stopwatch",
-        subtitle = "Real-time centisecond stopwatch with lap splits",
-        prompt = "Start the stopwatch so I can track my lap splits"
-    ),
-    StarterPrompt(
-        title = "Today's Calendar",
-        subtitle = "Inspect & manage upcoming scheduled events",
-        prompt = "Show all my upcoming calendar events"
-    ),
-    StarterPrompt(
-        title = "Capture & Analyze Screen",
-        subtitle = "Explicit MediaProjection screenshot + instant AI visual analysis",
-        prompt = "Take a screenshot using MediaProjection and visually analyze what is on my screen"
-    ),
-    StarterPrompt(
         title = "Screenshot & Share",
         subtitle = "Multi-step chain: MediaProjection capture -> WhatsApp share",
         prompt = "Take a screenshot and share it on WhatsApp"
-    ),
-    StarterPrompt(
-        title = "Open YouTube / Chrome",
-        subtitle = "App Navigation Tool via UsageStats & Android Intents",
-        prompt = "Open YouTube for me"
-    ),
-    StarterPrompt(
-        title = "Recent Apps (UsageStats)",
-        subtitle = "Inspect recently used apps and open any installed app",
-        prompt = "Show my recently used apps"
     ),
     StarterPrompt(
         title = "Weekly Budget Chart",
@@ -189,6 +183,11 @@ fun ChatHubScreen(
     val clockTimers by viewModel.clockTimers.collectAsStateWithLifecycle()
     val clockStopwatch by viewModel.clockStopwatch.collectAsStateWithLifecycle()
     val calendarEvents by viewModel.calendarEvents.collectAsStateWithLifecycle()
+    val savedNotes by viewModel.savedNotes.collectAsStateWithLifecycle()
+    val voiceRelayState by viewModel.voiceRelayState.collectAsStateWithLifecycle()
+    val systemOverlayState by viewModel.systemOverlayState.collectAsStateWithLifecycle()
+    val activeToolChain by viewModel.activeToolChain.collectAsStateWithLifecycle()
+    val toolChainHistory by viewModel.toolChainHistory.collectAsStateWithLifecycle()
     val capturedScreenshots by viewModel.capturedScreenshots.collectAsStateWithLifecycle()
     val inChatUiPartsByText by viewModel.inChatUiPartsByText.collectAsStateWithLifecycle()
 
@@ -378,6 +377,46 @@ fun ChatHubScreen(
             Spacer(Modifier.width(4.dp))
 
             IconButton(
+                onClick = {
+                    if (Settings.canDrawOverlays(context)) {
+                        val started = SystemOverlayStateBus.ensureSystemOverlayRunning(context)
+                        Toast.makeText(
+                            context,
+                            if (started) "System Siri Overlay active over all apps" else "Could not start system overlay",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        Toast.makeText(
+                            context,
+                            "Grant 'Display over other apps' so Mote floats over Chrome & all apps",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        val intent = Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:${context.packageName}")
+                        ).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        runCatching { context.startActivity(intent) }
+                    }
+                },
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("chat_system_overlay_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Layers,
+                    contentDescription = if (systemOverlayState.isServiceRunning) {
+                        "System overlay active over other apps"
+                    } else {
+                        "Launch system-wide Siri overlay over other apps"
+                    },
+                    tint = if (systemOverlayState.isServiceRunning) LocalNanoEmerald else CloudFlashCobalt,
+                    modifier = Modifier.size(21.dp)
+                )
+            }
+
+            IconButton(
                 onClick = onOpenToolsTab,
                 modifier = Modifier
                     .size(48.dp)
@@ -555,6 +594,16 @@ fun ChatHubScreen(
                 }
             }
 
+            if (toolChainHistory.isNotEmpty() || activeToolChain != null) {
+                item(key = "chat_tool_execution_log_panel") {
+                    ToolExecutionLogHistoryPanel(
+                        chains = toolChainHistory,
+                        activeChain = activeToolChain,
+                        onClearLog = { viewModel.clearToolChainHistory() }
+                    )
+                }
+            }
+
             items(messages, key = { it.id }) { msg ->
                 val isAssistant = msg.chatRole() != ChatRole.USER
                 val attachedParts = if (isAssistant) inChatUiPartsByText[msg.text].orEmpty() else emptyList()
@@ -572,6 +621,8 @@ fun ChatHubScreen(
                             stopwatch = clockStopwatch,
                             calendarEvents = calendarEvents,
                             capturedScreenshots = capturedScreenshots,
+                            savedNotes = savedNotes,
+                            voiceRelayState = voiceRelayState,
                             onToggleAlarm = { id, enabled -> viewModel.toggleClockAlarm(id, enabled) },
                             onShiftAlarmMinutes = { id, delta -> viewModel.shiftClockAlarmMinutes(id, delta) },
                             onDeleteAlarm = { id -> viewModel.deleteClockAlarm(id) },
@@ -582,7 +633,12 @@ fun ChatHubScreen(
                             onExecuteGenUiAction = { action -> executor.execute(action) },
                             onAnalyzeScreenshot = { capId, prompt ->
                                 viewModel.analyzeCapturedScreenshot(capId, prompt, selectedBot)
-                            }
+                            },
+                            onDeleteNote = { id -> viewModel.deleteSavedNote(id) },
+                            onSaveOcrToNotes = { title, text -> viewModel.saveOcrTextAsNote(title, text) },
+                            onToggleVoiceRelayPause = { viewModel.toggleVoiceRelayPause() },
+                            onStopVoiceRelay = { viewModel.stopVoiceRelay() },
+                            onSubmitVoiceRelayText = { heard -> viewModel.submitVoiceRelayUtterance(heard) }
                         )
                     }
                 }
@@ -608,6 +664,8 @@ fun ChatHubScreen(
                                 stopwatch = clockStopwatch,
                                 calendarEvents = calendarEvents,
                                 capturedScreenshots = capturedScreenshots,
+                                savedNotes = savedNotes,
+                                voiceRelayState = voiceRelayState,
                                 onToggleAlarm = { id, enabled -> viewModel.toggleClockAlarm(id, enabled) },
                                 onShiftAlarmMinutes = { id, delta -> viewModel.shiftClockAlarmMinutes(id, delta) },
                                 onDeleteAlarm = { id -> viewModel.deleteClockAlarm(id) },
@@ -618,7 +676,12 @@ fun ChatHubScreen(
                                 onExecuteGenUiAction = { action -> executor.execute(action) },
                                 onAnalyzeScreenshot = { capId, prompt ->
                                     viewModel.analyzeCapturedScreenshot(capId, prompt, selectedBot)
-                                }
+                                },
+                                onDeleteNote = { id -> viewModel.deleteSavedNote(id) },
+                                onSaveOcrToNotes = { title, text -> viewModel.saveOcrTextAsNote(title, text) },
+                                onToggleVoiceRelayPause = { viewModel.toggleVoiceRelayPause() },
+                                onStopVoiceRelay = { viewModel.stopVoiceRelay() },
+                                onSubmitVoiceRelayText = { heard -> viewModel.submitVoiceRelayUtterance(heard) }
                             )
                         }
                     }

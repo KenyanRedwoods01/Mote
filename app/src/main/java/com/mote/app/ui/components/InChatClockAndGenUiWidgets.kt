@@ -34,6 +34,8 @@ import com.mote.app.control.CountdownTimerItem
 import com.mote.app.control.StopwatchUiState
 import com.mote.app.data.db.CalendarEventEntity
 import com.mote.app.data.db.ClockAlarmEntity
+import com.mote.app.data.db.SavedNoteEntity
+import com.mote.app.service.LiveVoiceRelayUiState
 import com.mote.app.ui.theme.LocalMoteColors
 
 /**
@@ -48,6 +50,8 @@ fun InChatUiPartRenderer(
     stopwatch: StopwatchUiState,
     calendarEvents: List<CalendarEventEntity> = emptyList(),
     capturedScreenshots: Map<String, Bitmap> = emptyMap(),
+    savedNotes: List<SavedNoteEntity> = emptyList(),
+    voiceRelayState: LiveVoiceRelayUiState = LiveVoiceRelayUiState(),
     onToggleAlarm: (String, Boolean) -> Unit,
     onShiftAlarmMinutes: (String, Int) -> Unit,
     onDeleteAlarm: (String) -> Unit,
@@ -58,7 +62,12 @@ fun InChatUiPartRenderer(
     onDeleteCalendarEvent: (String) -> Unit = {},
     onSyncCalendarEventToSystem: (CalendarEventEntity) -> Unit = {},
     onExecuteGenUiAction: (MoteAction) -> Unit,
-    onAnalyzeScreenshot: (captureId: String, prompt: String) -> Unit = { _, _ -> }
+    onAnalyzeScreenshot: (captureId: String, prompt: String) -> Unit = { _, _ -> },
+    onDeleteNote: (String) -> Unit = {},
+    onSaveOcrToNotes: (title: String, text: String) -> Unit = { _, _ -> },
+    onToggleVoiceRelayPause: () -> Unit = {},
+    onStopVoiceRelay: () -> Unit = {},
+    onSubmitVoiceRelayText: (String) -> Unit = {}
 ) {
     when (part) {
         is InChatUiPart.ClockAlarmsPanel -> {
@@ -135,6 +144,28 @@ fun InChatUiPartRenderer(
         }
         is InChatUiPart.ToolChainStatusPanel -> {
             InChatToolChainStatusWidget(snapshot = part.snapshot)
+        }
+        is InChatUiPart.OcrResultPanel -> {
+            InChatOcrResultWidget(
+                part = part,
+                onSaveToNotes = onSaveOcrToNotes
+            )
+        }
+        is InChatUiPart.NotesPanel -> {
+            InChatNotesWidget(
+                part = part,
+                notes = savedNotes,
+                onDeleteNote = onDeleteNote
+            )
+        }
+        is InChatUiPart.VoiceCallRelayPanel -> {
+            InChatVoiceCallRelayWidget(
+                part = part,
+                relayState = voiceRelayState,
+                onTogglePause = onToggleVoiceRelayPause,
+                onStop = onStopVoiceRelay,
+                onSubmitHeardText = onSubmitVoiceRelayText
+            )
         }
     }
 }
@@ -1258,6 +1289,23 @@ private fun InChatToolChainStatusWidget(snapshot: ToolChainExecutionSnapshot) {
                                 color = tokens.accentBlue
                             )
                         }
+                    }
+
+                    if (!step.verificationDetail.isNullOrBlank()) {
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = if (step.status == ToolStepStatus.EXECUTION_VERIFIED) {
+                                "✓ Verified: ${step.verificationDetail}"
+                            } else {
+                                "Check: ${step.verificationDetail}"
+                            },
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (step.status == ToolStepStatus.EXECUTION_VERIFIED) LocalNanoEmerald else Color(0xFFD97706),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            lineHeight = 13.5.sp
+                        )
                     }
 
                     if (step.summary.isNotBlank()) {

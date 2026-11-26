@@ -493,6 +493,116 @@ class HybridAiRouter {
         )
     }
 
+    /**
+     * Performs real multimodal OCR & document text extraction on a captured screenshot Bitmap
+     * using Firebase AI Logic Gemini Vision so downstream tools (e.g. Save to Notes) receive
+     * verified extracted text.
+     */
+    suspend fun extractTextFromBitmap(
+        bitmap: Bitmap,
+        modelName: String = DEFAULT_MODEL_NAME
+    ): Result<String> {
+        val candidates = buildList {
+            add(modelName.ifBlank { DEFAULT_MODEL_NAME })
+            if (LITE_MODEL_NAME !in this) add(LITE_MODEL_NAME)
+        }
+        var lastError: Exception? = null
+        for ((idx, candidateId) in candidates.withIndex()) {
+            try {
+                val model = Firebase.ai.generativeModel(
+                    modelName = candidateId,
+                    generationConfig = generationConfig {
+                        temperature = 0.1f
+                        maxOutputTokens = 1024
+                    },
+                    systemInstruction = content {
+                        text(
+                            "You are an accurate Android OCR engine. Extract all visible text, headings, " +
+                                "key values, dates, numbers, and actionable details from the screenshot cleanly. " +
+                                "Output plain structured text without preamble."
+                        )
+                    }
+                )
+                val response = withTimeout(INFERENCE_TIMEOUT_MS) {
+                    model.generateContent(
+                        content {
+                            image(bitmap)
+                            text("Extract all readable text and summarize any key items from this screenshot.")
+                        }
+                    )
+                }
+                val extracted = response.text?.trim().orEmpty()
+                if (extracted.isNotBlank()) {
+                    return Result.success(extracted)
+                }
+                lastError = IllegalStateException("OCR returned empty text.")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastError = e
+                if (idx < candidates.lastIndex) {
+                    delay(300L)
+                    continue
+                }
+            }
+        }
+        return Result.failure(lastError ?: IllegalStateException("OCR extraction failed."))
+    }
+
+    /**
+     * Generates a fast, concise spoken reply for the real-time Android STT <-> AI <-> TTS
+     * live voice call relay using Gemini Flash-Lite.
+     */
+    suspend fun generateVoiceCallReply(
+        heardText: String,
+        conversationContext: String,
+        personaInstruction: String
+    ): Result<String> {
+        val candidates = listOf(LITE_MODEL_NAME, DEFAULT_MODEL_NAME)
+        var lastError: Exception? = null
+        for ((idx, candidateId) in candidates.withIndex()) {
+            try {
+                val model = Firebase.ai.generativeModel(
+                    modelName = candidateId,
+                    generationConfig = generationConfig {
+                        temperature = 0.55f
+                        maxOutputTokens = 160
+                    },
+                    systemInstruction = content {
+                        text(personaInstruction)
+                    }
+                )
+                val prompt = buildString {
+                    if (conversationContext.isNotBlank()) {
+                        appendLine("Recent live call transcript:")
+                        appendLine(conversationContext)
+                        appendLine()
+                    }
+                    append("Latest spoken input from caller: \"$heardText\"\nRespond concisely as spoken words only:")
+                }
+                val response = withTimeout(25_000L) {
+                    model.generateContent(prompt)
+                }
+                val spoken = response.text
+                    ?.replace(Regex("[*_`#]+"), "")
+                    ?.trim()
+                    .orEmpty()
+                if (spoken.isNotBlank()) {
+                    return Result.success(spoken)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastError = e
+                if (idx < candidates.lastIndex) {
+                    delay(200L)
+                    continue
+                }
+            }
+        }
+        return Result.failure(lastError ?: IllegalStateException("Voice AI reply failed."))
+    }
+
     companion object {
         private const val TAG = "HybridAiRouter"
         const val DEFAULT_MODEL_NAME = "gemini-3.8-flash"

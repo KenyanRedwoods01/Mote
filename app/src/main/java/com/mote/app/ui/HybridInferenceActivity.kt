@@ -172,6 +172,7 @@ class HybridInferenceActivity : ComponentActivity() {
                             val liveContext = buildString {
                                 appendLine(localModelManager.clockTools.buildClockContextForAi())
                                 appendLine(localModelManager.calendarTools.buildCalendarContextForAi())
+                                appendLine(localModelManager.notesTools.buildNotesContextForAi())
                                 appendLine(localModelManager.deviceTools.buildDeviceContextForAi())
                                 if (!screenContext.isNullOrBlank()) {
                                     appendLine("REDACTED SCREEN CONTEXT: $screenContext")
@@ -263,6 +264,7 @@ class HybridInferenceActivity : ComponentActivity() {
                                 val runResult = localModelManager.toolOrchestrator.executeChain(
                                     rawInvocations = plannedInvocations,
                                     chainTitle = if (plannedInvocations.size > 1) "Sequential Tool Chain" else "Overlay Action Verification",
+                                    promptSummary = trimmed,
                                     onProgress = { progressSnap ->
                                         val activeStep = progressSnap.steps.firstOrNull { it.status == ToolStepStatus.RUNNING }
                                         pendingToolHint = if (activeStep != null) {
@@ -453,10 +455,10 @@ class HybridInferenceActivity : ComponentActivity() {
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             listOf(
+                                "Take a screenshot -> OCR analysis -> Save to Notes",
+                                "Open Chrome and search latest AI news",
+                                "Open phone and call 555-0199 then listen and reply with TTS",
                                 "Capture & analyze screen",
-                                "Open YouTube",
-                                "Open Chrome",
-                                "Show recent apps",
                                 "Start 5m Focus Timer",
                                 "Set 7:30 AM Alarm"
                             ).forEach { chip ->
@@ -548,6 +550,8 @@ class HybridInferenceActivity : ComponentActivity() {
                                 }
                             }
 
+                            val overlayNotes by localModelManager.notesTools.notes.collectAsStateWithLifecycle()
+                            val overlayVoiceRelay by localModelManager.voiceCallBridge.state.collectAsStateWithLifecycle()
                             liveParts.forEach { part ->
                                 InChatUiPartRenderer(
                                     part = part,
@@ -556,6 +560,8 @@ class HybridInferenceActivity : ComponentActivity() {
                                     stopwatch = clockStopwatch,
                                     calendarEvents = calendarEvents,
                                     capturedScreenshots = capturedScreenshots,
+                                    savedNotes = overlayNotes,
+                                    voiceRelayState = overlayVoiceRelay,
                                     onToggleAlarm = { id, enabled ->
                                         scope.launch { localModelManager.clockTools.toggleAlarmById(id, enabled) }
                                     },
@@ -583,7 +589,16 @@ class HybridInferenceActivity : ComponentActivity() {
                                         if (bmp != null && !bmp.isRecycled) {
                                             runLiveToolStream(analysisPrompt, attachedBitmap = bmp)
                                         }
-                                    }
+                                    },
+                                    onDeleteNote = { id ->
+                                        scope.launch { localModelManager.notesTools.deleteNoteById(id) }
+                                    },
+                                    onSaveOcrToNotes = { title, text ->
+                                        scope.launch { localModelManager.notesTools.saveNote(title, text, "Overlay OCR") }
+                                    },
+                                    onToggleVoiceRelayPause = { localModelManager.voiceCallBridge.togglePause() },
+                                    onStopVoiceRelay = { localModelManager.voiceCallBridge.stopRelay() },
+                                    onSubmitVoiceRelayText = { heard -> localModelManager.voiceCallBridge.submitHeardUtterance(heard) }
                                 )
                             }
 

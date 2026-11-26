@@ -12,9 +12,11 @@ import androidx.room.RoomDatabase
         ModelBenchmarkEntity::class,
         ClockAlarmEntity::class,
         CalendarEventEntity::class,
-        ToolExecutionLogEntity::class
+        ToolExecutionLogEntity::class,
+        SavedNoteEntity::class,
+        ToolChainRunEntity::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class LocalModelDatabase : RoomDatabase() {

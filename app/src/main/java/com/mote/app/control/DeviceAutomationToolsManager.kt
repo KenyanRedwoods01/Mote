@@ -21,6 +21,7 @@ import android.view.PixelCopy
 import com.mote.app.service.MediaProjectionConsentBridge
 import com.mote.app.service.MoteAccessibilityService
 import com.mote.app.service.ScreenCaptureProjectionService
+import com.mote.app.service.SystemOverlayStateBus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -94,6 +95,16 @@ class DeviceAutomationToolsManager(context: Context) {
 
     private val _capturedScreenshots = MutableStateFlow<Map<String, Bitmap>>(emptyMap())
     val capturedScreenshots: StateFlow<Map<String, Bitmap>> = _capturedScreenshots.asStateFlow()
+
+    fun getCapturedBitmap(captureId: String?): Pair<String, Bitmap>? {
+        val map = _capturedScreenshots.value
+        if (!captureId.isNullOrBlank()) {
+            val exact = map[captureId]
+            if (exact != null && !exact.isRecycled) return captureId to exact
+        }
+        val latest = map.entries.lastOrNull { !it.value.isRecycled } ?: return null
+        return latest.key to latest.value
+    }
 
     // -------------------------------------------------------------------------
     // 1. CAMERA & FLASHLIGHT TOOLS
@@ -724,11 +735,20 @@ class DeviceAutomationToolsManager(context: Context) {
         return try {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             appContext.startActivity(intent)
+            val overlayActive = SystemOverlayStateBus.ensureSystemOverlayRunning(appContext)
+            SystemOverlayStateBus.publishAppContext(
+                appLabel = appLabel,
+                statusBanner = "Active on $appLabel"
+            )
             DeviceToolOutcome(
                 success = true,
                 title = "Opened $appLabel",
                 summary = "Launched $appLabel ($detail) immediately.",
-                badge = badge
+                badge = badge,
+                detailLines = listOfNotNull(
+                    "Target package/handler: $detail",
+                    if (overlayActive) "Animated Siri-style floating overlay active on top of $appLabel" else null
+                )
             )
         } catch (e: Exception) {
             DeviceToolOutcome(
@@ -937,11 +957,17 @@ class DeviceAutomationToolsManager(context: Context) {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             appContext.startActivity(intent)
+            val overlayActive = SystemOverlayStateBus.ensureSystemOverlayRunning(appContext)
+            SystemOverlayStateBus.publishAppContext("Browser", "Browsing ${Uri.parse(normalized).host ?: "web"}")
             DeviceToolOutcome(
                 success = true,
                 title = "Opened Web Link",
                 summary = "Opened $normalized in browser.",
-                badge = "URL OPENED"
+                badge = "URL OPENED",
+                detailLines = listOfNotNull(
+                    normalized,
+                    if (overlayActive) "Siri-style floating agent overlay active over browser" else null
+                )
             )
         } catch (e: Exception) {
             DeviceToolOutcome(
@@ -958,7 +984,124 @@ class DeviceAutomationToolsManager(context: Context) {
         if (q.isBlank()) {
             return DeviceToolOutcome(false, "Query Required", "Provide a search query.", "MISSING PARAM")
         }
-        return openUrl("https://www.google.com/search?q=${Uri.encode(q)}")
+        return searchInApp(appName = "Chrome", query = q)
+    }
+
+    /**
+     * Opens a specific target app (Chrome, YouTube, Maps, Play Store, etc.) directly with a live search query
+     * and activates the system-wide animated Siri-like overlay right on top of the app.
+     */
+    fun searchInApp(appName: String, query: String): DeviceToolOutcome {
+        val cleanQuery = query.trim()
+        if (cleanQuery.isBlank()) {
+            return openApp(appName.ifBlank { "Chrome" })
+        }
+        val normApp = appName.trim().lowercase(Locale.US)
+        val encoded = Uri.encode(cleanQuery)
+
+        val (targetUrl, targetPkg, displayLabel) = when {
+            normApp.contains("youtube") || normApp == "yt" ->
+                Triple("https://www.youtube.com/results?search_query=$encoded", "com.google.android.youtube", "YouTube")
+            normApp.contains("map") ->
+                return navigateMaps(cleanQuery, mode = null)
+            normApp.contains("play") || normApp.contains("store") ->
+                Triple("https://play.google.com/store/search?q=$encoded&c=apps", "com.android.vending", "Play Store")
+            normApp.contains("amazon") ->
+                Triple("https://www.amazon.com/s?k=$encoded", "com.amazon.mShop.android.shopping", "Amazon")
+            normApp.contains("spotify") ->
+                Triple("https://open.spotify.com/search/$encoded", "com.spotify.music", "Spotify")
+            else ->
+                Triple("https://www.google.com/search?q=$encoded", "com.android.chrome", "Chrome")
+        }
+
+        val targetedIntent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).apply {
+            setPackage(targetPkg)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val launchedTargeted = try {
+            appContext.startActivity(targetedIntent)
+            true
+        } catch (_: Exception) {
+            false
+        }
+
+        if (!launchedTargeted) {
+            val genericIntent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                appContext.startActivity(genericIntent)
+            } catch (e: Exception) {
+                return DeviceToolOutcome(
+                    success = false,
+                    title = "Search Failed",
+                    summary = "Could not open $displayLabel search for '$cleanQuery': ${e.localizedMessage ?: "no handler"}",
+                    badge = "ERROR"
+                )
+            }
+        }
+
+        val overlayActive = SystemOverlayStateBus.ensureSystemOverlayRunning(appContext)
+        SystemOverlayStateBus.publishAppContext(
+            appLabel = displayLabel,
+            statusBanner = "$displayLabel · Searching \"$cleanQuery\""
+        )
+        return DeviceToolOutcome(
+            success = true,
+            title = "Searched $displayLabel",
+            summary = "Opened $displayLabel and searched for \"$cleanQuery\" in real time.",
+            badge = "${displayLabel.uppercase(Locale.US)} SEARCH",
+            detailLines = listOfNotNull(
+                "Query: $cleanQuery",
+                "Handler: ${if (launchedTargeted) targetPkg else "System default handler"}",
+                if (overlayActive) "Animated Siri-style Mote overlay active over $displayLabel" else "Grant Overlay permission in Tools to keep the animated orb floating over $displayLabel"
+            )
+        )
+    }
+
+    /**
+     * Play-compliant phone dialer launch using `ACTION_DIAL` (zero restricted CALL_PHONE permission),
+     * opening the Android Phone app pre-filled with the requested number and activating the animated
+     * Siri-like floating overlay ready for live STT <-> AI <-> TTS voice relay.
+     */
+    fun dialPhoneNumber(phoneNumber: String, contactLabel: String? = null): DeviceToolOutcome {
+        val cleaned = phoneNumber.replace(Regex("[^0-9+*#]"), "").trim()
+        val uri = if (cleaned.isNotBlank()) Uri.parse("tel:$cleaned") else Uri.parse("tel:")
+        val intent = Intent(Intent.ACTION_DIAL, uri).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return try {
+            appContext.startActivity(intent)
+            val overlayActive = SystemOverlayStateBus.ensureSystemOverlayRunning(appContext)
+            val labelText = contactLabel?.takeIf { it.isNotBlank() }?.let { "$it ($cleaned)" }
+                ?: cleaned.ifBlank { "Phone Dialer" }
+            SystemOverlayStateBus.publishAppContext(
+                appLabel = "Phone",
+                statusBanner = "Phone Dialer · $labelText"
+            )
+            DeviceToolOutcome(
+                success = true,
+                title = if (cleaned.isNotBlank()) "Dialing $labelText" else "Opened Phone Dialer",
+                summary = if (cleaned.isNotBlank()) {
+                    "Opened Android Phone pre-filled with $labelText (ACTION_DIAL). Tap Call and put on speakerphone for live Mote voice relay."
+                } else {
+                    "Opened Android Phone dialer ready for your call."
+                },
+                badge = "PHONE DIALER",
+                detailLines = listOfNotNull(
+                    if (cleaned.isNotBlank()) "Number: $cleaned" else null,
+                    "Play-compliant ACTION_DIAL intent",
+                    if (overlayActive) "Siri-style Mote overlay floating over Phone" else null
+                )
+            )
+        } catch (e: Exception) {
+            DeviceToolOutcome(
+                success = false,
+                title = "Phone Dialer Unavailable",
+                summary = "No phone dialer app responded on this device (${e.localizedMessage ?: "missing dialer"}).",
+                badge = "ERROR"
+            )
+        }
     }
 
     fun openSettings(section: String): DeviceToolOutcome {
