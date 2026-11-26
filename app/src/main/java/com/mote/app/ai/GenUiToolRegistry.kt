@@ -154,13 +154,16 @@ class AndroidAlarmManagerTool(
         displayName = "Alarm Manager",
         category = "Clock · AlarmManager",
         description = "Schedules, updates, toggles, and deletes alarms using Android's AlarmManager.",
-        operations = listOf("addAlarm", "updateAlarm", "deleteAlarm", "toggleAlarm", "listAlarms"),
+        operations = listOf("addAlarm", "updateAlarm", "snoozeAlarm", "shiftAlarm", "toggleAlarm", "deleteAlarm", "syncAlarm", "listAlarms"),
         requiredPermissionLabels = listOf("Exact Alarms", "Notifications")
     )
 
     override val supportedOperations: Set<String> = setOf(
         "addalarm", "setalarm", "set_alarm", "createalarm", "create_alarm", "alarm", "schedulealarm", "clock_create_alarm",
         "updatealarm", "update_alarm", "editalarm", "changealarm", "clock_update_alarm",
+        "snoozealarm", "snooze_alarm", "snooze",
+        "shiftalarm", "shift_alarm", "pushalarm", "delayalarm",
+        "syncalarm", "sync_alarm", "openandroidclock",
         "deletealarm", "delete_alarm", "removealarm", "cancelalarm", "clock_delete_alarm",
         "togglealarm", "toggle_alarm", "enablealarm", "enable_alarm", "disablealarm", "disable_alarm", "turnoffalarm", "turnonalarm", "clock_toggle_alarm",
         "listalarms", "list_alarms", "showalarms", "getalarms", "clock_list_alarms"
@@ -187,12 +190,33 @@ class AndroidAlarmManagerTool(
                             highlightAlarmId = res.targetAlarmId,
                             success = res.success,
                             alarmManagerMode = res.alarmManagerMode
-                        )
+                        ),
+                        createdRecordId = res.targetAlarmId
                     )
                 } else {
+                    val rawHour = args.intVal("hour") ?: parsedStrTime?.first
+                    val rawMin = args.intVal("minute") ?: parsedStrTime?.second ?: 0
+                    if (rawHour != null && (rawHour < 0 || rawHour > 23)) {
+                        return GenUiToolResult(
+                            toolId = descriptor.id,
+                            operation = "addAlarm",
+                            success = false,
+                            feedback = "Invalid alarm hour ($rawHour). Provide an hour between 0 and 23.",
+                            uiPart = null
+                        )
+                    }
+                    if (rawMin < 0 || rawMin > 59) {
+                        return GenUiToolResult(
+                            toolId = descriptor.id,
+                            operation = "addAlarm",
+                            success = false,
+                            feedback = "Invalid alarm minute ($rawMin). Provide minutes between 0 and 59.",
+                            uiPart = null
+                        )
+                    }
                     addAlarm(
-                        hour = args.intVal("hour") ?: parsedStrTime?.first ?: 7,
-                        minute = args.intVal("minute") ?: parsedStrTime?.second ?: 0,
+                        hour = rawHour ?: 7,
+                        minute = rawMin,
                         label = args.str("label") ?: args.str("name") ?: args.str("title") ?: "Alarm",
                         days = args.strList("days"),
                         enabled = args.boolVal("enabled") ?: true
@@ -206,6 +230,62 @@ class AndroidAlarmManagerTool(
                 newLabel = args.str("newLabel") ?: args.str("label"),
                 enabled = args.boolVal("enabled")
             )
+            "snoozealarm", "snooze_alarm", "snooze" -> {
+                val query = args.str("query") ?: args.str("id") ?: args.str("label")
+                val mins = args.intVal("minutes") ?: args.intVal("deltaMinutes") ?: 10
+                val res = clockTools.snoozeAlarm(query, mins)
+                GenUiToolResult(
+                    toolId = descriptor.id,
+                    operation = "snoozeAlarm",
+                    success = res.success,
+                    feedback = res.summary,
+                    uiPart = InChatUiPart.ClockAlarmsPanel(
+                        partId = nextPartId(),
+                        actionSummary = res.summary,
+                        highlightAlarmId = res.targetAlarmId,
+                        success = res.success,
+                        alarmManagerMode = res.alarmManagerMode
+                    ),
+                    createdRecordId = res.targetAlarmId
+                )
+            }
+            "shiftalarm", "shift_alarm", "pushalarm", "delayalarm" -> {
+                val query = args.str("query") ?: args.str("id") ?: args.str("label")
+                val delta = args.intVal("deltaMinutes") ?: args.intVal("minutes") ?: 15
+                val res = clockTools.shiftAlarmByQuery(query, delta)
+                GenUiToolResult(
+                    toolId = descriptor.id,
+                    operation = "shiftAlarm",
+                    success = res.success,
+                    feedback = res.summary,
+                    uiPart = InChatUiPart.ClockAlarmsPanel(
+                        partId = nextPartId(),
+                        actionSummary = res.summary,
+                        highlightAlarmId = res.targetAlarmId,
+                        success = res.success,
+                        alarmManagerMode = res.alarmManagerMode
+                    ),
+                    createdRecordId = res.targetAlarmId
+                )
+            }
+            "syncalarm", "sync_alarm", "openandroidclock" -> {
+                val query = args.str("query") ?: args.str("id") ?: args.str("label")
+                val res = clockTools.syncAlarmByQuery(query)
+                GenUiToolResult(
+                    toolId = descriptor.id,
+                    operation = "syncAlarm",
+                    success = res.success,
+                    feedback = res.summary,
+                    uiPart = InChatUiPart.ClockAlarmsPanel(
+                        partId = nextPartId(),
+                        actionSummary = res.summary,
+                        highlightAlarmId = res.targetAlarmId,
+                        success = res.success,
+                        alarmManagerMode = res.alarmManagerMode
+                    ),
+                    createdRecordId = res.targetAlarmId
+                )
+            }
             "deletealarm", "delete_alarm", "removealarm", "cancelalarm", "clock_delete_alarm" -> deleteAlarm(
                 query = args.str("query") ?: args.str("id") ?: args.str("alarmId") ?: args.str("label")
             )
@@ -408,14 +488,15 @@ class StopwatchTool(
         displayName = "Stopwatch",
         category = "Clock · Live Stream",
         description = "Controls live stopwatch start, pause, lap splits, reset, and elapsed-time status.",
-        operations = listOf("startStopwatch", "pauseStopwatch", "lapStopwatch", "resetStopwatch", "getStopwatchStatus"),
+        operations = listOf("startStopwatch", "pauseStopwatch", "lapStopwatch", "clearLaps", "listLaps", "resetStopwatch", "getStopwatchStatus"),
         requiredPermissionLabels = emptyList()
     )
 
     override val supportedOperations: Set<String> = setOf(
         "startstopwatch", "start_stopwatch", "resumestopwatch", "resume_stopwatch", "stopwatch",
         "pausestopwatch", "pause_stopwatch", "stopstopwatch", "stop_stopwatch",
-        "lapstopwatch", "lap_stopwatch", "recordlap",
+        "lapstopwatch", "lap_stopwatch", "recordlap", "splitstopwatch",
+        "clearlaps", "clear_laps", "listlaps", "list_laps",
         "resetstopwatch", "reset_stopwatch", "clearstopwatch",
         "getstopwatchstatus", "stopwatchstatus", "stopwatch_status", "clock_stopwatch"
     )
@@ -425,15 +506,26 @@ class StopwatchTool(
         val action = when (op) {
             "startstopwatch", "start_stopwatch", "resumestopwatch", "resume_stopwatch" -> "start"
             "pausestopwatch", "pause_stopwatch", "stopstopwatch", "stop_stopwatch" -> "pause"
-            "lapstopwatch", "lap_stopwatch", "recordlap" -> "lap"
+            "lapstopwatch", "lap_stopwatch", "recordlap", "splitstopwatch" -> "lap"
+            "clearlaps", "clear_laps" -> "clearLaps"
+            "listlaps", "list_laps" -> "listLaps"
             "resetstopwatch", "reset_stopwatch", "clearstopwatch" -> "reset"
             "getstopwatchstatus", "stopwatchstatus", "stopwatch_status" -> "status"
             else -> args.str("action") ?: "start"
         }
         val res = clockTools.controlStopwatch(action)
+        val normalizedOp = when (action.lowercase(Locale.US)) {
+            "start", "resume" -> "startStopwatch"
+            "pause", "stop" -> "pauseStopwatch"
+            "lap", "split" -> "lapStopwatch"
+            "clearlaps", "clear_laps" -> "clearLaps"
+            "listlaps", "list_laps" -> "listLaps"
+            "reset", "clear" -> "resetStopwatch"
+            else -> "getStopwatchStatus"
+        }
         return GenUiToolResult(
             toolId = descriptor.id,
-            operation = operation,
+            operation = normalizedOp,
             success = res.success,
             feedback = res.summary,
             uiPart = InChatUiPart.ClockStopwatchPanel(

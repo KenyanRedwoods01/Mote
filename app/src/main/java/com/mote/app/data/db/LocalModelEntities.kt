@@ -81,7 +81,9 @@ data class ModelStudioPrefsEntity(
     val toolScreenCaptureEnabled: Boolean = true,
     val toolAppLauncherEnabled: Boolean = true,
     val toolNavigationEnabled: Boolean = true,
-    val darkThemeEnabled: Boolean = false
+    val darkThemeEnabled: Boolean = false,
+    val hybridInferenceMode: String = "PREFER_ON_DEVICE",
+    val nativeFunctionCallingEnabled: Boolean = true
 )
 
 @Entity(tableName = "model_benchmarks")

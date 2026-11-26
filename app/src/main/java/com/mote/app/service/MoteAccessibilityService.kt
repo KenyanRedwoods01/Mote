@@ -2,11 +2,14 @@ package com.mote.app.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -35,49 +38,84 @@ data class AppControlActionResult(
 
 class MoteAccessibilityService : AccessibilityService() {
 
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var floatingWindowManager: AccessibilityFloatingWindowManager? = null
+    private var pendingAttachRunnable: Runnable? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        OverlayCustomizationStore.ensureLoaded(this)
-        floatingWindowManager = AccessibilityFloatingWindowManager(
-            service = this,
-            screenContextProvider = { captureRedactedScreenSummary() }
-        ).also { mgr ->
-            mgr.attachAndShow()
+        runCatching { OverlayCustomizationStore.ensureLoaded(this) }
+        pendingAttachRunnable?.let { mainHandler.removeCallbacks(it) }
+        val attachTask = Runnable {
+            if (instance !== this) return@Runnable
+            runCatching {
+                val existing = floatingWindowManager
+                val mgr = if (existing == null || existing.isDestroyed) {
+                    AccessibilityFloatingWindowManager(
+                        service = this,
+                        screenContextProvider = { captureRedactedScreenSummary() }
+                    ).also { floatingWindowManager = it }
+                } else {
+                    existing
+                }
+                mgr.attachAndShow()
+            }
         }
+        pendingAttachRunnable = attachTask
+        // Brief delay ensures the AccessibilityService window token is fully bound before addView
+        mainHandler.postDelayed(attachTask, 220L)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         // Zero idle CPU: track foreground package and auto-hide overlay on sensitive apps
-        val pkg = event?.packageName?.toString()
-        currentPackageName = pkg
-        val blocked = PrivacyGuard.isPackageBlocked(pkg)
-        floatingWindowManager?.setPrivacyHidden(blocked)
-        SystemOverlayStateBus.publishForegroundPackage(pkg, blocked)
+        runCatching {
+            val pkg = event?.packageName?.toString()?.takeIf { it.isNotBlank() } ?: return@runCatching
+            currentPackageName = pkg
+            val blocked = PrivacyGuard.isPackageBlocked(pkg)
+            floatingWindowManager?.setPrivacyHidden(blocked)
+            SystemOverlayStateBus.publishForegroundPackage(pkg, blocked)
+        }
     }
 
     override fun onInterrupt() = Unit
 
+    override fun onUnbind(intent: Intent?): Boolean {
+        teardownOverlayAndCursor()
+        return super.onUnbind(intent)
+    }
+
     override fun onDestroy() {
-        SystemCursorOverlayManager.hideNow()
-        floatingWindowManager?.detach()
-        floatingWindowManager = null
-        if (instance === this) instance = null
+        teardownOverlayAndCursor()
         super.onDestroy()
     }
 
+    private fun teardownOverlayAndCursor() {
+        pendingAttachRunnable?.let { mainHandler.removeCallbacks(it) }
+        pendingAttachRunnable = null
+        runCatching { SystemCursorOverlayManager.hideNow() }
+        runCatching { floatingWindowManager?.detach() }
+        floatingWindowManager = null
+        if (instance === this) instance = null
+    }
+
     fun showFloatingOverlay(): Boolean {
-        val mgr = floatingWindowManager ?: AccessibilityFloatingWindowManager(
-            service = this,
-            screenContextProvider = { captureRedactedScreenSummary() }
-        ).also { floatingWindowManager = it }
-        return mgr.attachAndShow()
+        return runCatching {
+            val existing = floatingWindowManager
+            val mgr = if (existing == null || existing.isDestroyed) {
+                AccessibilityFloatingWindowManager(
+                    service = this,
+                    screenContextProvider = { captureRedactedScreenSummary() }
+                ).also { floatingWindowManager = it }
+            } else {
+                existing
+            }
+            mgr.attachAndShow()
+        }.getOrDefault(false)
     }
 
     fun hideFloatingOverlay() {
-        floatingWindowManager?.hide()
+        runCatching { floatingWindowManager?.hide() }
     }
 
     /**

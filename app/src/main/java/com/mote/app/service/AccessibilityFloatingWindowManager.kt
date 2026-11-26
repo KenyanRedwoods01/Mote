@@ -5,10 +5,12 @@ import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
+import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -20,6 +22,7 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import com.mote.app.R
 import com.mote.app.ui.HybridInferenceActivity
 import kotlin.math.roundToInt
 
@@ -53,10 +56,17 @@ class AccessibilityFloatingWindowManager(
     private var isAttached = false
     private var hiddenForPrivacy = false
 
+    val isDestroyed: Boolean
+        get() = initializedLifecycle && lifecycleRegistry.currentState == Lifecycle.State.DESTROYED
+
     fun attachAndShow(): Boolean {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             mainHandler.post { attachAndShow() }
             return true
+        }
+        if (isDestroyed) {
+            SystemOverlayStateBus.markAccessibilityOverlayRunning(false)
+            return false
         }
         OverlayCustomizationStore.ensureLoaded(service)
         if (isAttached && overlayContainer != null) {
@@ -65,10 +75,14 @@ class AccessibilityFloatingWindowManager(
             return true
         }
         return try {
-            ensureLifecycleResumed()
+            if (!ensureLifecycleResumed()) {
+                SystemOverlayStateBus.markAccessibilityOverlayRunning(false)
+                return false
+            }
             val wm = service.getSystemService(AccessibilityService.WINDOW_SERVICE) as WindowManager
             windowManager = wm
 
+            val themedContext = ContextThemeWrapper(service, R.style.Theme_Mote)
             val metrics = service.resources.displayMetrics
             val screenWidthPx = metrics.widthPixels
             val screenHeightPx = metrics.heightPixels
@@ -96,8 +110,11 @@ class AccessibilityFloatingWindowManager(
             }
             overlayWindowParams = params
 
+            // CRITICAL: Compose's WindowRecomposerFactory inspects the WINDOW ROOT VIEW (container),
+            // so ViewTreeLifecycleOwner / ViewModelStoreOwner / SavedStateRegistryOwner MUST be set
+            // on the root DraggableOverlayFrameLayout as well as the child ComposeView.
             val container = DraggableOverlayFrameLayout(
-                context = service,
+                context = themedContext,
                 windowManager = wm,
                 layoutParamsProvider = { overlayWindowParams },
                 onDragStateChanged = { dragging ->
@@ -107,13 +124,17 @@ class AccessibilityFloatingWindowManager(
                     OverlayCustomizationStore.savePosition(service, x, y)
                 }
             ).apply {
-                visibility = if (hiddenForPrivacy) View.GONE else View.VISIBLE
-            }
-
-            val view = ComposeView(service).apply {
                 setViewTreeLifecycleOwner(this@AccessibilityFloatingWindowManager)
                 setViewTreeViewModelStoreOwner(this@AccessibilityFloatingWindowManager)
                 setViewTreeSavedStateRegistryOwner(this@AccessibilityFloatingWindowManager)
+                visibility = if (hiddenForPrivacy) View.GONE else View.VISIBLE
+            }
+
+            val view = ComposeView(themedContext).apply {
+                setViewTreeLifecycleOwner(this@AccessibilityFloatingWindowManager)
+                setViewTreeViewModelStoreOwner(this@AccessibilityFloatingWindowManager)
+                setViewTreeSavedStateRegistryOwner(this@AccessibilityFloatingWindowManager)
+                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
                 setContent {
                     SystemAssistantOverlayContent(
                         hostBadgeLabel = "A11Y",
@@ -129,7 +150,11 @@ class AccessibilityFloatingWindowManager(
             isAttached = true
             SystemOverlayStateBus.markAccessibilityOverlayRunning(true)
             true
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
+            overlayContainer?.let { runCatching { windowManager?.removeViewImmediate(it) } }
+            overlayContainer = null
+            composeView = null
+            isAttached = false
             SystemOverlayStateBus.markAccessibilityOverlayRunning(false)
             false
         }
@@ -151,8 +176,9 @@ class AccessibilityFloatingWindowManager(
 
     fun detach() {
         val cleanup = Runnable {
+            composeView?.disposeComposition()
             overlayContainer?.let { v ->
-                runCatching { windowManager?.removeView(v) }
+                runCatching { windowManager?.removeViewImmediate(v) }
             }
             overlayContainer = null
             composeView = null
@@ -165,7 +191,7 @@ class AccessibilityFloatingWindowManager(
                 runCatching { lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP) }
                 runCatching { lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY) }
             }
-            viewModelStore.clear()
+            runCatching { viewModelStore.clear() }
         }
         if (Looper.myLooper() == Looper.getMainLooper()) {
             cleanup.run()
@@ -174,7 +200,7 @@ class AccessibilityFloatingWindowManager(
         }
     }
 
-    private fun ensureLifecycleResumed() {
+    private fun ensureLifecycleResumed(): Boolean {
         if (!initializedLifecycle) {
             savedStateController.performAttach()
             savedStateController.performRestore(null)
@@ -182,7 +208,9 @@ class AccessibilityFloatingWindowManager(
             lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
             lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
             initializedLifecycle = true
+            return true
         }
+        return lifecycleRegistry.currentState != Lifecycle.State.DESTROYED
     }
 
     private fun launchBotOverlaySheet(bot: OverlayQuickBot) {

@@ -150,15 +150,15 @@ object SystemCursorOverlayManager {
 
         if (cursorView == null) {
             val view = LiveCursorView(context.applicationContext)
-            val windowType = when {
+            val primaryType = when {
                 canUseAccessibility -> WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                 else -> @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
             }
-            val lp = WindowManager.LayoutParams(
+            fun buildParams(type: Int) = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
-                windowType,
+                type,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
@@ -167,10 +167,18 @@ object SystemCursorOverlayManager {
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
             }
-            val added = runCatching {
+            var lp = buildParams(primaryType)
+            var added = runCatching {
                 wm.addView(view, lp)
                 true
             }.getOrDefault(false)
+            if (!added && canUseAccessibility && canUseAppOverlay && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                lp = buildParams(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+                added = runCatching {
+                    wm.addView(view, lp)
+                    true
+                }.getOrDefault(false)
+            }
             if (!added) return false
             cursorView = view
             layoutParams = lp

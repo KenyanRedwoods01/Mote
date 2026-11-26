@@ -76,6 +76,8 @@ fun ModelsStudioScreen(
     val parserTelemetry by viewModel.streamParserTelemetry.collectAsStateWithLifecycle()
     val systemHealth by viewModel.systemHealth.collectAsStateWithLifecycle()
     val lastAdaptiveRouteNote by viewModel.lastAdaptiveRouteNote.collectAsStateWithLifecycle()
+    val aiCoreStatus by viewModel.aiCoreStatus.collectAsStateWithLifecycle()
+    val toolSyncVerifications by viewModel.toolSyncVerifications.collectAsStateWithLifecycle()
 
     var selectedStudioTab by remember { mutableIntStateOf(0) } // 0 = Models, 1 = Debug
     var showCreateSheet by remember { mutableStateOf(false) }
@@ -322,6 +324,20 @@ fun ModelsStudioScreen(
                     onToggleOfflineChat = { viewModel.setPreferLoadedLocalChat(it) },
                     onBenchmark = { viewModel.benchmarkLoadedLocalModel() },
                     onUnload = { viewModel.unloadLocalModel() }
+                )
+            }
+
+            // 1a. Official Firebase AI Logic Hybrid SDK (OnDeviceConfig + AICore Gemini Nano + Native Tools)
+            item(key = "firebase_hybrid_sdk_card") {
+                FirebaseHybridStatusCard(
+                    selectedMode = MoteInferenceMode.fromString(studioPrefs.hybridInferenceMode),
+                    aiCoreStatus = aiCoreStatus,
+                    nativeFunctionCallingEnabled = studioPrefs.nativeFunctionCallingEnabled,
+                    recentSyncRecords = toolSyncVerifications,
+                    onSelectMode = { viewModel.setHybridInferenceMode(it) },
+                    onToggleNativeFunctionCalling = { viewModel.setNativeFunctionCallingEnabled(it) },
+                    onRefreshAiCore = { viewModel.refreshAiCoreStatus() },
+                    onDownloadGeminiNano = { viewModel.downloadGeminiNanoViaAiCore() }
                 )
             }
 

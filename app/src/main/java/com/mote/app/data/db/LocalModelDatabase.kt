@@ -17,7 +17,7 @@ import androidx.room.RoomDatabase
         ToolChainRunEntity::class,
         ToolChainStateEntity::class
     ],
-    version = 11,
+    version = 12,
     exportSchema = false
 )
 abstract class LocalModelDatabase : RoomDatabase() {

@@ -116,7 +116,8 @@ class SequentialToolOrchestrator(
     private val dao: LocalModelDao,
     private val scope: CoroutineScope,
     val stateManager: ToolChainStateManager = ToolChainStateManager(dao, scope),
-    private val appContext: Context? = null
+    private val appContext: Context? = null,
+    private val toolExecutionSync: com.mote.app.control.ToolExecutionSyncService? = null
 ) {
 
     private val serializerJson = Json {
@@ -295,6 +296,7 @@ class SequentialToolOrchestrator(
             publishSnapshot(complete = false)
 
             val stepStartMs = System.currentTimeMillis()
+            val preSnapshot = toolExecutionSync?.capturePreExecutionSnapshot()
             val result = toolRegistry.dispatch(resolvedInv)
 
             if (result == null) {
@@ -306,8 +308,13 @@ class SequentialToolOrchestrator(
                     verificationDetail = "Tool not found in GenUiToolRegistry"
                 )
             } else {
-                // Independent post-execution background verification against Room / Android APIs
-                val bgVerification = toolRegistry.verifyExecutionInBackground(result)
+                // Independent post-execution background verification via ToolExecutionSyncService
+                // (observes real AlarmManager PendingIntents, Stopwatch live ticks, Dialer/App transitions, etc.)
+                val bgVerification = if (toolExecutionSync != null && preSnapshot != null) {
+                    toolExecutionSync.verifySystemExecution(result, preSnapshot)
+                } else {
+                    toolRegistry.verifyExecutionInBackground(result)
+                }
                 val durationMs = (System.currentTimeMillis() - stepStartMs).coerceAtLeast(1L)
 
                 val isBlocked = !result.success && result.feedback.contains("unauthorized", ignoreCase = true)
@@ -818,6 +825,29 @@ class SequentialToolOrchestrator(
                 (lower.contains("alarm") || lower.contains("wake me"))
             ) {
                 when {
+                    lower.contains("snooze") || lower.contains("delay") || lower.contains("push") || lower.contains("shift") -> {
+                        val deltaMatch = Regex("""(-?\d+)\s*(?:minutes?|mins?|m)\b""").find(lower)
+                        val mins = deltaMatch?.groupValues?.get(1)?.toIntOrNull() ?: 10
+                        val query = extractAlarmLabel(clause) ?: ""
+                        planned.add(
+                            ChatToolInvocation(
+                                tool = if (lower.contains("snooze")) "snoozeAlarm" else "shiftAlarm",
+                                args = buildJsonObject {
+                                    put("query", JsonPrimitive(query))
+                                    put("minutes", JsonPrimitive(mins))
+                                }
+                            )
+                        )
+                    }
+                    lower.contains("sync") -> {
+                        val query = extractAlarmLabel(clause) ?: ""
+                        planned.add(
+                            ChatToolInvocation(
+                                tool = "syncAlarm",
+                                args = buildJsonObject { put("query", JsonPrimitive(query)) }
+                            )
+                        )
+                    }
                     lower.contains("delete") || lower.contains("cancel") || lower.contains("remove") -> {
                         val query = if (lower.contains("all")) "all" else extractAlarmLabel(clause) ?: ""
                         planned.add(
@@ -925,6 +955,8 @@ class SequentialToolOrchestrator(
                 (lower.contains("stopwatch") || lower.contains("stop watch") || Regex("""\b(lap|split)\b""").containsMatchIn(lower))
             ) {
                 val op = when {
+                    lower.contains("clear lap") || lower.contains("delete lap") -> "clearLaps"
+                    lower.contains("list lap") || lower.contains("show lap") -> "listLaps"
                     lower.contains("pause") || Regex("""\bstop\s+(the\s+)?stop\s*watch\b""").containsMatchIn(lower) ||
                         (lower.contains("stop") && !lower.contains("start") && !lower.contains("stop watch")) -> "pauseStopwatch"
                     lower.contains("lap") || lower.contains("split") -> "lapStopwatch"

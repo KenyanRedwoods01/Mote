@@ -36,6 +36,8 @@ class ClipboardToolsManager(context: Context) {
     @Volatile
     private var lastWrittenByMote: String? = null
 
+    fun readCurrentClipboardPreview(): String? = _lastKnownClipboardText.value ?: lastWrittenByMote
+
     /**
      * Reads plain text from Android's system [ClipboardManager].
      * Always executes on [Dispatchers.Main] for Android ClipboardManager thread safety.

@@ -4,8 +4,13 @@ import android.graphics.Bitmap
 import android.os.SystemClock
 import android.util.Log
 import com.google.firebase.Firebase
+import com.google.firebase.ai.InferenceMode
+import com.google.firebase.ai.InferenceSource
+import com.google.firebase.ai.OnDeviceConfig
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.Content
+import com.google.firebase.ai.type.GenerativeBackend
+import com.google.firebase.ai.type.PublicPreviewAPI
 import com.google.firebase.ai.type.Schema
 import com.google.firebase.ai.type.content
 import com.google.firebase.ai.type.generationConfig
@@ -40,7 +45,9 @@ data class InferenceMetrics(
     val latencyMs: Long,
     val ttftMs: Long,
     val approxTokensPerSec: Float,
-    val modelName: String
+    val modelName: String,
+    val inferenceSourceLabel: String = "Cloud",
+    val nativeFunctionCallCount: Int = 0
 )
 
 sealed interface ChatStreamEvent {
@@ -57,22 +64,48 @@ sealed interface ChatStreamEvent {
         val fullText: String,
         val metrics: InferenceMetrics,
         val rawFullText: String = fullText,
-        val completedToolJsonBlocks: List<String> = emptyList()
+        val completedToolJsonBlocks: List<String> = emptyList(),
+        val engineUsed: EngineUsed = EngineUsed.CLOUD_FLASH
     ) : ChatStreamEvent
 }
 
 /**
- * Firebase AI Logic Router powering both:
- * 1. Streaming multi-turn + multimodal (vision) conversational LLM chat with explicit
- *    partial JSON chunk buffering via [IncrementalJsonStreamParser]
- * 2. Rich Generative UI structured JSON runtime (11 interactive Compose components) with
- *    streaming partial JSON chunk assembly via [JsonDocumentStreamAccumulator]
+ * Firebase AI Logic Hybrid Router powering:
+ * 1. Official SDK-managed hybrid inference via [OnDeviceConfig] & [InferenceMode]
+ *    (`PREFER_ON_DEVICE`, `ONLY_ON_DEVICE`, `PREFER_IN_CLOUD`, `ONLY_IN_CLOUD`) with automatic
+ *    Gemini Nano (AICore) -> Cloud Gemini fallback and real [InferenceSource] reporting.
+ * 2. Official native Firebase Function Calling (`Tool.functionDeclarations`) seamlessly unified
+ *    with `<<<TOOL_CALL>>>` streamed JSON blocks via [IncrementalJsonStreamParser].
+ * 3. Rich Generative UI structured JSON runtime (11 interactive Compose components) with
+ *    streaming partial JSON chunk assembly via [JsonDocumentStreamAccumulator].
  */
 class HybridAiRouter {
 
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
+    }
+
+    @OptIn(PublicPreviewAPI::class)
+    private fun mapToSdkInferenceMode(mode: MoteInferenceMode): InferenceMode = when (mode) {
+        MoteInferenceMode.PREFER_ON_DEVICE -> InferenceMode.PREFER_ON_DEVICE
+        MoteInferenceMode.ONLY_ON_DEVICE -> InferenceMode.ONLY_ON_DEVICE
+        MoteInferenceMode.PREFER_IN_CLOUD -> InferenceMode.PREFER_IN_CLOUD
+        MoteInferenceMode.ONLY_IN_CLOUD -> InferenceMode.ONLY_IN_CLOUD
+    }
+
+    @OptIn(PublicPreviewAPI::class)
+    private fun mapInferenceSourceToEngine(
+        source: InferenceSource?,
+        requestedMode: MoteInferenceMode
+    ): Pair<EngineUsed, String> = when (source) {
+        InferenceSource.ON_DEVICE -> EngineUsed.LOCAL_NANO to "On-Device (Gemini Nano)"
+        InferenceSource.IN_CLOUD -> EngineUsed.CLOUD_FLASH to "Cloud (Firebase AI Logic)"
+        else -> if (requestedMode == MoteInferenceMode.ONLY_ON_DEVICE) {
+            EngineUsed.LOCAL_NANO to "On-Device (Gemini Nano)"
+        } else {
+            EngineUsed.CLOUD_FLASH to "Cloud (Firebase AI Logic)"
+        }
     }
 
     private val metricItemSchema = Schema.obj(
@@ -240,20 +273,31 @@ class HybridAiRouter {
             msg.contains("try again later")
     }
 
+    private fun isHybridOrToolConfigRejection(error: Throwable): Boolean {
+        val msg = generateSequence(error) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString(" ")
+            .lowercase()
+        return msg.contains("on-device") ||
+            msg.contains("ondevice") ||
+            msg.contains("aicore") ||
+            msg.contains("function_declarations") ||
+            msg.contains("function calling") ||
+            msg.contains("tools") ||
+            msg.contains("unsupported")
+    }
+
     private fun displayNameForModel(modelId: String): String =
         supportedModels.firstOrNull { it.id == modelId }?.displayName ?: modelId
 
     /**
-     * Streams a real multi-turn conversational response (with optional attached image)
-     * through Firebase AI Logic while routing every chunk through [IncrementalJsonStreamParser].
-     *
-     * Partial JSON chunks and split delimiter tags are buffered inside the service layer so
-     * [ChatStreamEvent.Delta.accumulatedText] always updates the chat UI incrementally and cleanly
-     * without leaking half-JSON or breaking deserialization.
-     *
-     * Automatically retries and falls back across supported Gemini models if the chosen endpoint
-     * reports a transient high-demand / 503 spike before streaming output begins.
+     * Streams a real multi-turn conversational response (with optional attached image) through
+     * Firebase AI Logic's official hybrid SDK ([OnDeviceConfig] + [InferenceMode]) and native
+     * [FirebaseNativeToolDeclarations] function calling, while routing text chunks through
+     * [IncrementalJsonStreamParser] so both native `FunctionCallPart`s and `<<<TOOL_CALL>>>`
+     * blocks feed cleanly into [SequentialToolOrchestrator].
      */
+    @OptIn(PublicPreviewAPI::class)
     fun streamChatMessage(
         userPrompt: String,
         botSystemPrompt: String,
@@ -261,7 +305,9 @@ class HybridAiRouter {
         config: LlmConfig,
         attachedBitmap: Bitmap? = null,
         clockContext: String = "",
-        enabledToolIds: Set<String> = GenUiToolRegistry.ALL_TOOL_IDS
+        enabledToolIds: Set<String> = GenUiToolRegistry.ALL_TOOL_IDS,
+        inferenceMode: MoteInferenceMode = MoteInferenceMode.PREFER_ON_DEVICE,
+        enableNativeFunctionCalling: Boolean = true
     ): Flow<ChatStreamEvent> = flow {
         val startMs = SystemClock.elapsedRealtime()
         val systemInstructionContent = content {
@@ -284,7 +330,7 @@ class HybridAiRouter {
                         if (isUser) {
                             msg.text
                         } else {
-                            "[Prior turn summary — tool call tags omitted; emit fresh <<<TOOL_CALL>>> tags for any new request] ${msg.text}"
+                            "[Prior turn summary — tool calls omitted; issue fresh function calls or <<<TOOL_CALL>>> tags for any new request] ${msg.text}"
                         }
                     )
                 }
@@ -299,24 +345,29 @@ class HybridAiRouter {
 
         val payload = recentTurns + currentTurn
         val candidates = buildCandidateModels(config.modelName)
+        val nativeTools = if (enableNativeFunctionCalling &&
+            enabledToolIds.isNotEmpty() &&
+            inferenceMode != MoteInferenceMode.ONLY_ON_DEVICE
+        ) {
+            FirebaseNativeToolDeclarations.buildTools(enabledToolIds)
+        } else {
+            emptyList()
+        }
+        val sdkHybridMode = mapToSdkInferenceMode(inferenceMode)
         var lastError: Exception? = null
 
         for ((index, candidateModelId) in candidates.withIndex()) {
-            val attemptStartMs = SystemClock.elapsedRealtime()
-            var ttftMs = 0L
-            val rawAccumulated = StringBuilder()
-            val streamParser = IncrementalJsonStreamParser()
-            StreamParserTelemetry.recordStreamStart(candidateModelId)
-
-            val model = Firebase.ai.generativeModel(
-                modelName = candidateModelId,
-                generationConfig = generationConfig {
-                    temperature = config.temperature.coerceIn(0.0f, 1.5f)
-                    topP = config.topP.coerceIn(0.1f, 1.0f)
-                    maxOutputTokens = config.maxOutputTokens.coerceIn(128, 4096)
-                },
-                systemInstruction = systemInstructionContent
-            )
+            // Try official SDK hybrid + native tools first; if rejected by a specific endpoint/mode
+            // (and not ONLY_ON_DEVICE), gracefully degrade to cloud-only without breaking chat.
+            val attemptConfigs = buildList {
+                add(Pair(OnDeviceConfig(mode = sdkHybridMode), nativeTools))
+                if (inferenceMode != MoteInferenceMode.ONLY_ON_DEVICE) {
+                    if (nativeTools.isNotEmpty()) {
+                        add(Pair(null, nativeTools))
+                    }
+                    add(Pair(null, emptyList()))
+                }
+            }
 
             if (index > 0) {
                 emit(
@@ -328,70 +379,149 @@ class HybridAiRouter {
                 )
             }
 
-            try {
-                withTimeout(INFERENCE_TIMEOUT_MS) {
-                    model.generateContentStream(payload).collect { chunk ->
-                        val piece = chunk.text.orEmpty()
-                        if (piece.isNotEmpty()) {
+            for ((subIdx, pair) in attemptConfigs.withIndex()) {
+                val (onDeviceCfg, toolsList) = pair
+                val attemptStartMs = SystemClock.elapsedRealtime()
+                var ttftMs = 0L
+                val rawAccumulated = StringBuilder()
+                val nativeCallJsonBlocks = mutableListOf<String>()
+                var observedInferenceSource: InferenceSource? = null
+                val streamParser = IncrementalJsonStreamParser()
+                StreamParserTelemetry.recordStreamStart(candidateModelId)
+
+                val genConfig = generationConfig {
+                    temperature = config.temperature.coerceIn(0.0f, 1.5f)
+                    topP = config.topP.coerceIn(0.1f, 1.0f)
+                    maxOutputTokens = config.maxOutputTokens.coerceIn(128, 4096)
+                }
+
+                val aiClient = Firebase.ai(backend = GenerativeBackend.googleAI())
+                val model = if (onDeviceCfg != null) {
+                    aiClient.generativeModel(
+                        modelName = candidateModelId,
+                        generationConfig = genConfig,
+                        systemInstruction = systemInstructionContent,
+                        tools = toolsList.ifEmpty { null },
+                        onDeviceConfig = onDeviceCfg
+                    )
+                } else {
+                    aiClient.generativeModel(
+                        modelName = candidateModelId,
+                        generationConfig = genConfig,
+                        systemInstruction = systemInstructionContent,
+                        tools = toolsList.ifEmpty { null }
+                    )
+                }
+
+                try {
+                    withTimeout(INFERENCE_TIMEOUT_MS) {
+                        model.generateContentStream(payload).collect { chunk ->
+                            observedInferenceSource = chunk.inferenceSource
                             val now = SystemClock.elapsedRealtime()
-                            if (ttftMs == 0L) {
-                                ttftMs = (now - attemptStartMs).coerceAtLeast(1L)
+
+                            // 1. Collect official native Firebase FunctionCallParts
+                            val chunkFnCalls = chunk.functionCalls
+                            if (chunkFnCalls.isNotEmpty()) {
+                                if (ttftMs == 0L) {
+                                    ttftMs = (now - attemptStartMs).coerceAtLeast(1L)
+                                }
+                                val newlyAdded = mutableListOf<String>()
+                                chunkFnCalls.forEach { fnCall ->
+                                    val canonical = FirebaseNativeToolDeclarations.toCanonicalToolJson(fnCall)
+                                    if (canonical !in nativeCallJsonBlocks) {
+                                        nativeCallJsonBlocks += canonical
+                                        newlyAdded += canonical
+                                    }
+                                }
+                                if (newlyAdded.isNotEmpty()) {
+                                    val fnNames = chunkFnCalls.joinToString(", ") { it.name }
+                                    emit(
+                                        ChatStreamEvent.Delta(
+                                            accumulatedText = rawAccumulated.toString(),
+                                            elapsedMs = now - startMs,
+                                            pendingToolHint = "Firebase Native Function Call: $fnNames...",
+                                            completedToolJsonBlocks = nativeCallJsonBlocks.toList(),
+                                            newlyCompletedToolJsonBlocks = newlyAdded
+                                        )
+                                    )
+                                }
                             }
-                            rawAccumulated.append(piece)
-                            val parsed = streamParser.feedChunk(piece)
-                            emit(
-                                ChatStreamEvent.Delta(
-                                    accumulatedText = parsed.visibleText,
-                                    elapsedMs = now - startMs,
-                                    pendingToolHint = parsed.pendingToolHint,
-                                    completedToolJsonBlocks = parsed.completedToolJsonBlocks,
-                                    newlyCompletedToolJsonBlocks = parsed.newlyCompletedToolJsonBlocks,
-                                    partialJsonBufferedBytes = parsed.partialJsonBufferedBytes
+
+                            // 2. Stream text chunks through IncrementalJsonStreamParser (dual-mode <<<TOOL_CALL>>> support)
+                            val piece = chunk.text.orEmpty()
+                            if (piece.isNotEmpty()) {
+                                if (ttftMs == 0L) {
+                                    ttftMs = (now - attemptStartMs).coerceAtLeast(1L)
+                                }
+                                rawAccumulated.append(piece)
+                                val parsed = streamParser.feedChunk(piece)
+                                emit(
+                                    ChatStreamEvent.Delta(
+                                        accumulatedText = parsed.visibleText,
+                                        elapsedMs = now - startMs,
+                                        pendingToolHint = parsed.pendingToolHint,
+                                        completedToolJsonBlocks = (nativeCallJsonBlocks + parsed.completedToolJsonBlocks).distinct(),
+                                        newlyCompletedToolJsonBlocks = parsed.newlyCompletedToolJsonBlocks,
+                                        partialJsonBufferedBytes = parsed.partialJsonBufferedBytes
+                                    )
                                 )
-                            )
+                            }
                         }
                     }
-                }
 
-                val finalSnapshot = streamParser.finish()
-                val rawFullText = rawAccumulated.toString().trim()
-                if (rawFullText.isBlank() && finalSnapshot.completedToolJsonBlocks.isEmpty()) {
-                    throw IllegalStateException("Gemini returned an empty response.")
-                }
+                    val finalSnapshot = streamParser.finish()
+                    val allToolBlocks = (nativeCallJsonBlocks + finalSnapshot.completedToolJsonBlocks).distinct()
+                    val rawFullText = rawAccumulated.toString().trim()
+                    if (rawFullText.isBlank() && allToolBlocks.isEmpty()) {
+                        throw IllegalStateException("Gemini returned an empty response.")
+                    }
 
-                val totalMs = (SystemClock.elapsedRealtime() - attemptStartMs).coerceAtLeast(1L)
-                val approxTokens = (rawFullText.length / 4f).coerceAtLeast(1f)
-                val tokensPerSec = approxTokens / (totalMs / 1000f)
-                emit(
-                    ChatStreamEvent.Completed(
-                        fullText = finalSnapshot.visibleText.trim(),
-                        rawFullText = rawFullText,
-                        completedToolJsonBlocks = finalSnapshot.completedToolJsonBlocks,
-                        metrics = InferenceMetrics(
-                            latencyMs = totalMs,
-                            ttftMs = if (ttftMs > 0L) ttftMs else totalMs,
-                            approxTokensPerSec = tokensPerSec,
-                            modelName = candidateModelId
+                    val (resolvedEngine, sourceLabel) = mapInferenceSourceToEngine(observedInferenceSource, inferenceMode)
+                    val totalMs = (SystemClock.elapsedRealtime() - attemptStartMs).coerceAtLeast(1L)
+                    val approxTokens = (rawFullText.length / 4f).coerceAtLeast(1f)
+                    val tokensPerSec = approxTokens / (totalMs / 1000f)
+                    emit(
+                        ChatStreamEvent.Completed(
+                            fullText = finalSnapshot.visibleText.trim(),
+                            rawFullText = rawFullText,
+                            completedToolJsonBlocks = allToolBlocks,
+                            engineUsed = resolvedEngine,
+                            metrics = InferenceMetrics(
+                                latencyMs = totalMs,
+                                ttftMs = if (ttftMs > 0L) ttftMs else totalMs,
+                                approxTokensPerSec = tokensPerSec,
+                                modelName = if (resolvedEngine == EngineUsed.LOCAL_NANO) "gemini-nano (AICore)" else candidateModelId,
+                                inferenceSourceLabel = sourceLabel,
+                                nativeFunctionCallCount = nativeCallJsonBlocks.size
+                            )
                         )
                     )
-                )
-                return@flow
-            } catch (e: TimeoutCancellationException) {
-                Log.e(TAG, "Gemini streaming chat timed out on $candidateModelId", e)
-                throw IllegalStateException("AI stream timed out after 60 seconds. Please try again.", e)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.w(TAG, "Gemini streaming chat failed on $candidateModelId: ${e.message}", e)
-                lastError = e
-                val canFallback = rawAccumulated.isEmpty() &&
-                    isTransientHighDemandError(e) &&
-                    index < candidates.lastIndex
-                if (canFallback) {
-                    delay(450L)
-                    continue
+                    return@flow
+                } catch (e: TimeoutCancellationException) {
+                    Log.e(TAG, "Gemini streaming chat timed out on $candidateModelId", e)
+                    throw IllegalStateException("AI stream timed out after 60 seconds. Please try again.", e)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "Gemini streaming chat failed on $candidateModelId (subAttempt=$subIdx): ${e.message}", e)
+                    lastError = e
+                    val canTrySubFallback = rawAccumulated.isEmpty() &&
+                        nativeCallJsonBlocks.isEmpty() &&
+                        subIdx < attemptConfigs.lastIndex &&
+                        isHybridOrToolConfigRejection(e)
+                    if (canTrySubFallback) {
+                        continue
+                    }
+                    val canFallbackModel = rawAccumulated.isEmpty() &&
+                        nativeCallJsonBlocks.isEmpty() &&
+                        isTransientHighDemandError(e) &&
+                        index < candidates.lastIndex
+                    if (canFallbackModel) {
+                        delay(450L)
+                        break // Advance to next candidateModelId
+                    }
+                    throw e
                 }
-                throw e
             }
         }
 
@@ -399,10 +529,11 @@ class HybridAiRouter {
     }
 
     /**
-     * Generates a structured Generative UI card by streaming partial JSON chunks through
-     * [JsonDocumentStreamAccumulator] so fragmented JSON payloads are assembled cleanly before
-     * decoding into [GenUiCardSpec]. Automatically falls back on transient high-demand spikes.
+     * Generates a structured Generative UI card through Firebase AI Logic's official hybrid SDK
+     * ([OnDeviceConfig] + [InferenceMode]), streaming partial JSON chunks through
+     * [JsonDocumentStreamAccumulator] and reporting the real SDK [InferenceSource].
      */
+    @OptIn(PublicPreviewAPI::class)
     suspend fun generateControlCard(
         userPrompt: String,
         botSystemPrompt: String,
@@ -412,6 +543,11 @@ class HybridAiRouter {
         modelName: String = DEFAULT_MODEL_NAME
     ): Result<HybridGenUiResult> {
         val start = SystemClock.elapsedRealtime()
+        val effectiveMode = if (!isForeground && requestedMode == MoteInferenceMode.PREFER_ON_DEVICE) {
+            MoteInferenceMode.PREFER_IN_CLOUD
+        } else {
+            requestedMode
+        }
         val combinedPrompt = buildString {
             appendLine("System: $botSystemPrompt")
             appendLine(
@@ -425,66 +561,89 @@ class HybridAiRouter {
         }
 
         val candidates = buildCandidateModels(modelName)
+        val sdkMode = mapToSdkInferenceMode(effectiveMode)
         var lastError: Throwable? = null
 
         for ((index, candidateModelId) in candidates.withIndex()) {
-            val genUiModel = Firebase.ai.generativeModel(
-                modelName = candidateModelId,
-                generationConfig = generationConfig {
+            val useOnDeviceConfigs = buildList {
+                add(OnDeviceConfig(mode = sdkMode))
+                if (effectiveMode != MoteInferenceMode.ONLY_ON_DEVICE) {
+                    add(null)
+                }
+            }
+
+            for ((subIdx, onDeviceCfg) in useOnDeviceConfigs.withIndex()) {
+                val aiClient = Firebase.ai(backend = GenerativeBackend.googleAI())
+                val genCfg = generationConfig {
                     responseMimeType = "application/json"
                     responseSchema = cardSchema
                     temperature = 0.25f
                 }
-            )
+                val genUiModel = if (onDeviceCfg != null) {
+                    aiClient.generativeModel(
+                        modelName = candidateModelId,
+                        generationConfig = genCfg,
+                        onDeviceConfig = onDeviceCfg
+                    )
+                } else {
+                    aiClient.generativeModel(
+                        modelName = candidateModelId,
+                        generationConfig = genCfg
+                    )
+                }
 
-            try {
-                StreamParserTelemetry.recordStreamStart("$candidateModelId (GenUI)")
-                val accumulator = JsonDocumentStreamAccumulator()
-                withTimeout(INFERENCE_TIMEOUT_MS) {
-                    genUiModel.generateContentStream(combinedPrompt).collect { chunk ->
-                        val piece = chunk.text.orEmpty()
-                        if (piece.isNotEmpty()) {
-                            accumulator.appendChunk(piece)
-                            StreamParserTelemetry.recordChunk(
-                                wasPartialJsonBuffered = !accumulator.isStructurallyComplete,
-                                newlyDecodedBlocks = if (accumulator.isStructurallyComplete) 1 else 0
-                            )
+                try {
+                    StreamParserTelemetry.recordStreamStart("$candidateModelId (GenUI)")
+                    val accumulator = JsonDocumentStreamAccumulator()
+                    var observedSource: InferenceSource? = null
+                    withTimeout(INFERENCE_TIMEOUT_MS) {
+                        genUiModel.generateContentStream(combinedPrompt).collect { chunk ->
+                            observedSource = chunk.inferenceSource
+                            val piece = chunk.text.orEmpty()
+                            if (piece.isNotEmpty()) {
+                                accumulator.appendChunk(piece)
+                                StreamParserTelemetry.recordChunk(
+                                    wasPartialJsonBuffered = !accumulator.isStructurallyComplete,
+                                    newlyDecodedBlocks = if (accumulator.isStructurallyComplete) 1 else 0
+                                )
+                            }
                         }
                     }
-                }
-                val raw = accumulator.extractCompleteJson()
-                if (raw.isBlank()) {
-                    lastError = IllegalStateException("Gemini returned an empty JSON response.")
-                    if (index < candidates.lastIndex) {
-                        delay(350L)
+                    val raw = accumulator.extractCompleteJson()
+                    if (raw.isBlank()) {
+                        lastError = IllegalStateException("Gemini returned an empty JSON response.")
+                        if (subIdx < useOnDeviceConfigs.lastIndex) continue
+                        if (index < candidates.lastIndex) {
+                            delay(350L)
+                            break
+                        }
+                        return Result.failure(lastError)
+                    }
+
+                    val spec = json.decodeFromString(GenUiCardSpec.serializer(), raw)
+                    val latency = SystemClock.elapsedRealtime() - start
+                    val (engine, _) = mapInferenceSourceToEngine(observedSource, effectiveMode)
+                    val reportedModel = if (engine == EngineUsed.LOCAL_NANO) "gemini-nano (AICore)" else candidateModelId
+                    return Result.success(HybridGenUiResult(spec, engine, latency, raw, reportedModel))
+                } catch (e: TimeoutCancellationException) {
+                    Log.e(TAG, "Gemini Generative UI timed out on $candidateModelId", e)
+                    return Result.failure(
+                        IllegalStateException("AI request timed out after 60 seconds. Please try again.", e)
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "Firebase AI Generative UI failed on $candidateModelId (subIdx=$subIdx): ${e.message}", e)
+                    lastError = e
+                    if (subIdx < useOnDeviceConfigs.lastIndex && isHybridOrToolConfigRejection(e)) {
                         continue
                     }
-                    return Result.failure(lastError)
+                    if (isTransientHighDemandError(e) && index < candidates.lastIndex) {
+                        delay(450L)
+                        break
+                    }
+                    return Result.failure(e)
                 }
-
-                val spec = json.decodeFromString(GenUiCardSpec.serializer(), raw)
-                val latency = SystemClock.elapsedRealtime() - start
-                val engine = if (requestedMode == MoteInferenceMode.ONLY_IN_CLOUD || !isForeground) {
-                    EngineUsed.CLOUD_FLASH
-                } else {
-                    EngineUsed.CLOUD_FLASH
-                }
-                return Result.success(HybridGenUiResult(spec, engine, latency, raw, candidateModelId))
-            } catch (e: TimeoutCancellationException) {
-                Log.e(TAG, "Gemini Generative UI timed out on $candidateModelId", e)
-                return Result.failure(
-                    IllegalStateException("AI request timed out after 60 seconds. Please try again.", e)
-                )
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.w(TAG, "Firebase AI Generative UI failed on $candidateModelId: ${e.message}", e)
-                lastError = e
-                if (isTransientHighDemandError(e) && index < candidates.lastIndex) {
-                    delay(450L)
-                    continue
-                }
-                return Result.failure(e)
             }
         }
 

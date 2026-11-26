@@ -13,6 +13,8 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import com.mote.app.ai.AiCoreNanoManager
+import com.mote.app.ai.AiCoreStatusSnapshot
 import com.mote.app.ai.ChatStreamEvent
 import com.mote.app.ai.GenUiToolRegistry
 import com.mote.app.ai.HybridAiRouter
@@ -33,8 +35,10 @@ import com.mote.app.control.LiveVoiceCallBridge
 import com.mote.app.control.NetworkToolsManager
 import com.mote.app.control.NotesToolsManager
 import com.mote.app.control.SystemHealthManager
+import com.mote.app.control.ToolExecutionSyncService
 import com.mote.app.control.ToolPermissionInspector
 import com.mote.app.control.ToolPermissionsSnapshot
+import com.mote.app.control.ToolSyncVerificationRecord
 import com.mote.app.data.db.LocalModelDatabase
 import com.mote.app.data.db.LocalModelEntity
 import com.mote.app.data.db.ModelBenchmarkEntity
@@ -287,6 +291,22 @@ class LocalModelManager(context: Context) {
         }
     )
 
+    val aiCoreNanoManager = AiCoreNanoManager()
+    val aiCoreStatus: StateFlow<AiCoreStatusSnapshot> = aiCoreNanoManager.status
+
+    val toolExecutionSync = ToolExecutionSyncService(
+        context = appContext,
+        dao = dao,
+        clockTools = clockTools,
+        deviceTools = deviceTools,
+        notesTools = notesTools,
+        clipboardTools = clipboardTools,
+        networkTools = networkTools,
+        voiceCallBridge = voiceCallBridge
+    )
+    val toolSyncVerifications: StateFlow<List<ToolSyncVerificationRecord>> =
+        toolExecutionSync.recentVerifications
+
     val toolChainStateManager = com.mote.app.ai.ToolChainStateManager(
         dao = dao,
         scope = scope
@@ -297,8 +317,17 @@ class LocalModelManager(context: Context) {
         dao = dao,
         scope = scope,
         stateManager = toolChainStateManager,
-        appContext = appContext
+        appContext = appContext,
+        toolExecutionSync = toolExecutionSync
     )
+
+    fun refreshAiCoreStatus() {
+        aiCoreNanoManager.refreshStatus()
+    }
+
+    fun downloadGeminiNanoViaAiCore() {
+        aiCoreNanoManager.triggerGeminiNanoDownload()
+    }
 
     private val _toolPermissions = MutableStateFlow(ToolPermissionInspector.inspect(appContext))
     val toolPermissions: StateFlow<ToolPermissionsSnapshot> = _toolPermissions.asStateFlow()

@@ -283,6 +283,97 @@ class ClockToolsManager(context: Context) {
         }
     }
 
+    suspend fun snoozeAlarm(queryOrId: String?, snoozeMinutes: Int = 10): ClockToolExecutionOutcome {
+        val safeSnooze = snoozeMinutes.coerceIn(1, 180)
+        return shiftAlarmByQuery(queryOrId, safeSnooze, verb = "Snoozed")
+    }
+
+    suspend fun shiftAlarmByQuery(
+        queryOrId: String?,
+        deltaMinutes: Int,
+        verb: String = "Shifted"
+    ): ClockToolExecutionOutcome {
+        if (deltaMinutes == 0) {
+            return ClockToolExecutionOutcome(
+                summary = "Shift amount must be non-zero minutes.",
+                success = false
+            )
+        }
+        val current = dao.getAllAlarmsOnce()
+        if (current.isEmpty()) {
+            return ClockToolExecutionOutcome(
+                summary = "No scheduled alarms found to ${verb.lowercase(Locale.US)}.",
+                success = false
+            )
+        }
+        val target = findMatchingAlarm(current, queryOrId)
+            ?: if (queryOrId.isNullOrBlank()) current.firstOrNull { it.enabled } ?: current.last() else null
+        if (target == null) {
+            return ClockToolExecutionOutcome(
+                summary = "No alarm matching '$queryOrId' was found.",
+                success = false
+            )
+        }
+        val totalMins = ((target.hour * 60 + target.minute + deltaMinutes) % (24 * 60) + (24 * 60)) % (24 * 60)
+        val updated = target.copy(
+            hour = totalMins / 60,
+            minute = totalMins % 60,
+            enabled = true
+        )
+        dao.upsertAlarm(updated)
+        cancelInAlarmManager(target.id)
+        val mode = scheduleWithAlarmManager(updated)
+        val sign = if (deltaMinutes > 0) "+${deltaMinutes}m" else "${deltaMinutes}m"
+        return ClockToolExecutionOutcome(
+            summary = "$verb '${updated.label}' ($sign) to ${formatAlarmTime(updated.hour, updated.minute)} ($mode)",
+            success = true,
+            targetAlarmId = updated.id,
+            alarmManagerMode = mode
+        )
+    }
+
+    suspend fun syncAlarmByQuery(queryOrId: String?): ClockToolExecutionOutcome {
+        val current = dao.getAllAlarmsOnce()
+        if (current.isEmpty()) {
+            return ClockToolExecutionOutcome(
+                summary = "No alarms exist yet to sync to the Android Clock app.",
+                success = false
+            )
+        }
+        val target = findMatchingAlarm(current, queryOrId) ?: current.last()
+        val launched = syncAlarmToAndroidClock(target)
+        return ClockToolExecutionOutcome(
+            summary = if (launched) {
+                "Opened Android Clock to sync '${target.label}' (${formatAlarmTime(target.hour, target.minute)})"
+            } else {
+                "Android Clock app is not available on this device to receive AlarmClock sync."
+            },
+            success = launched,
+            targetAlarmId = target.id,
+            alarmManagerMode = if (launched) "Android Clock Synced" else "Sync Unavailable"
+        )
+    }
+
+    /**
+     * Checks whether Android's [AlarmManager] currently holds an active [PendingIntent] for [alarmId].
+     * Used by [ToolExecutionSyncService] to confirm real OS-level scheduling before marking verified.
+     */
+    fun isAlarmScheduledInSystem(alarmId: String): Boolean {
+        return try {
+            val intent = Intent(appContext, MoteAlarmReceiver::class.java).apply {
+                action = "com.mote.app.ALARM_$alarmId"
+            }
+            PendingIntent.getBroadcast(
+                appContext,
+                alarmId.hashCode(),
+                intent,
+                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+            ) != null
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     fun syncAlarmToAndroidClock(alarm: ClockAlarmEntity): Boolean {
         return try {
             val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
@@ -541,20 +632,33 @@ class ClockToolsManager(context: Context) {
     }
 
     fun controlStopwatch(action: String): ClockToolExecutionOutcome {
-        return when (action.lowercase(Locale.US)) {
+        return when (action.trim().lowercase(Locale.US)) {
             "start", "resume" -> {
-                if (!_stopwatch.value.isRunning) {
+                val wasRunning = _stopwatch.value.isRunning
+                if (!wasRunning) {
                     stopwatchBaseElapsedMs = _stopwatch.value.elapsedMs
                     stopwatchStartedAtMs = SystemClock.elapsedRealtime()
                     _stopwatch.update { it.copy(isRunning = true) }
                     ensureStopwatchTickerRunning()
                 }
                 ClockToolExecutionOutcome(
-                    summary = "Stopwatch running (${formatStopwatchMs(_stopwatch.value.elapsedMs)} elapsed)",
+                    summary = if (wasRunning) {
+                        "Stopwatch already running (${formatStopwatchMs(_stopwatch.value.elapsedMs)} elapsed)"
+                    } else if (_stopwatch.value.elapsedMs > 0L) {
+                        "Stopwatch resumed from ${formatStopwatchMs(_stopwatch.value.elapsedMs)}"
+                    } else {
+                        "Stopwatch started from 00:00.00"
+                    },
                     success = true
                 )
             }
             "pause", "stop" -> {
+                if (!_stopwatch.value.isRunning && _stopwatch.value.elapsedMs == 0L) {
+                    return ClockToolExecutionOutcome(
+                        summary = "Stopwatch is already stopped at 00:00.00.",
+                        success = true
+                    )
+                }
                 if (_stopwatch.value.isRunning) {
                     val finalElapsed = stopwatchBaseElapsedMs + (SystemClock.elapsedRealtime() - stopwatchStartedAtMs)
                     stopwatchBaseElapsedMs = finalElapsed
@@ -567,11 +671,17 @@ class ClockToolsManager(context: Context) {
                     success = true
                 )
             }
-            "lap" -> {
+            "lap", "split" -> {
                 val nowElapsed = if (_stopwatch.value.isRunning) {
                     stopwatchBaseElapsedMs + (SystemClock.elapsedRealtime() - stopwatchStartedAtMs)
                 } else {
                     _stopwatch.value.elapsedMs
+                }
+                if (!_stopwatch.value.isRunning && nowElapsed == 0L) {
+                    return ClockToolExecutionOutcome(
+                        summary = "Start the stopwatch first before recording a lap split.",
+                        success = false
+                    )
                 }
                 val prevTotal = _stopwatch.value.laps.firstOrNull()?.totalMs ?: 0L
                 val lapNum = _stopwatch.value.laps.size + 1
@@ -586,7 +696,32 @@ class ClockToolsManager(context: Context) {
                     success = true
                 )
             }
-            "reset" -> {
+            "clearlaps", "clear_laps" -> {
+                val prevCount = _stopwatch.value.laps.size
+                _stopwatch.update { it.copy(laps = emptyList()) }
+                ClockToolExecutionOutcome(
+                    summary = "Cleared $prevCount stopwatch lap${if (prevCount == 1) "" else "s"} (elapsed ${formatStopwatchMs(_stopwatch.value.elapsedMs)} preserved)",
+                    success = true
+                )
+            }
+            "listlaps", "list_laps", "laps" -> {
+                val laps = _stopwatch.value.laps
+                if (laps.isEmpty()) {
+                    ClockToolExecutionOutcome(
+                        summary = "No stopwatch laps recorded yet (${formatStopwatchMs(_stopwatch.value.elapsedMs)} elapsed).",
+                        success = true
+                    )
+                } else {
+                    val detail = laps.take(5).joinToString(" | ") { l ->
+                        "Lap #${l.lapNumber}: +${formatStopwatchMs(l.splitMs)} (${formatStopwatchMs(l.totalMs)})"
+                    }
+                    ClockToolExecutionOutcome(
+                        summary = "${laps.size} lap(s): $detail",
+                        success = true
+                    )
+                }
+            }
+            "reset", "clear" -> {
                 stopwatchTickerJob?.cancel()
                 stopwatchTickerJob = null
                 stopwatchBaseElapsedMs = 0L
@@ -596,7 +731,11 @@ class ClockToolsManager(context: Context) {
                     success = true
                 )
             }
-            else -> getStopwatchStatusSummary()
+            "status", "elapsed", "get" -> getStopwatchStatusSummary()
+            else -> ClockToolExecutionOutcome(
+                summary = "Unsupported stopwatch action '$action'. Supported: start, pause, resume, lap, clearLaps, listLaps, reset, status.",
+                success = false
+            )
         }
     }
 

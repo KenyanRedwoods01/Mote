@@ -7,11 +7,13 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.os.Build
+import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
@@ -50,8 +52,8 @@ class BotOverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModel
         super.onCreate()
         OverlayCustomizationStore.ensureLoaded(this)
         SystemOverlayStateBus.markServiceRunning(true)
-        startForegroundNotification()
-        attachLottieVoiceOverlay()
+        runCatching { startForegroundNotification() }
+        runCatching { attachLottieVoiceOverlay() }
     }
 
     private fun startForegroundNotification() {
@@ -84,13 +86,14 @@ class BotOverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModel
             putExtra(HybridInferenceActivity.EXTRA_BOT_SYSTEM_PROMPT, bot.systemPrompt)
             putExtra(HybridInferenceActivity.EXTRA_INITIAL_PROMPT, bot.defaultPrompt)
         }
-        startActivity(intent)
+        runCatching { startActivity(intent) }
     }
 
     private fun attachLottieVoiceOverlay() {
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
         windowManager = wm
 
+        val themedContext = ContextThemeWrapper(this, R.style.Theme_Mote)
         val metrics = resources.displayMetrics
         val screenWidthPx = metrics.widthPixels
         val screenHeightPx = metrics.heightPixels
@@ -118,8 +121,9 @@ class BotOverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModel
         }
         overlayLayoutParams = params
 
+        // CRITICAL: Attach ViewTree owners on the WINDOW ROOT VIEW (container) as well as ComposeView
         val container = DraggableOverlayFrameLayout(
-            context = this,
+            context = themedContext,
             windowManager = wm,
             layoutParamsProvider = { overlayLayoutParams },
             onDragStateChanged = { dragging ->
@@ -128,12 +132,17 @@ class BotOverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModel
             onPositionSettled = { x, y ->
                 OverlayCustomizationStore.savePosition(this, x, y)
             }
-        )
-
-        val view = ComposeView(this).apply {
+        ).apply {
             setViewTreeLifecycleOwner(this@BotOverlayService)
             setViewTreeViewModelStoreOwner(this@BotOverlayService)
             setViewTreeSavedStateRegistryOwner(this@BotOverlayService)
+        }
+
+        val view = ComposeView(themedContext).apply {
+            setViewTreeLifecycleOwner(this@BotOverlayService)
+            setViewTreeViewModelStoreOwner(this@BotOverlayService)
+            setViewTreeSavedStateRegistryOwner(this@BotOverlayService)
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent {
                 val hudState by SystemOverlayStateBus.state.collectAsState()
                 // Yield seamlessly when AccessibilityFloatingWindowManager is already hosting the overlay
@@ -160,11 +169,12 @@ class BotOverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModel
     override fun onDestroy() {
         SystemOverlayStateBus.setOverlayDragging(false)
         SystemOverlayStateBus.markServiceRunning(false)
-        overlayContainer?.let { runCatching { windowManager?.removeView(it) } }
+        overlayView?.disposeComposition()
+        overlayContainer?.let { runCatching { windowManager?.removeViewImmediate(it) } }
         overlayContainer = null
         overlayView = null
         overlayLayoutParams = null
-        viewModelStore.clear()
+        runCatching { viewModelStore.clear() }
         super.onDestroy()
     }
 }

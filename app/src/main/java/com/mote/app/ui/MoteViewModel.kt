@@ -169,6 +169,9 @@ class MoteViewModel(
     val liteRtDiagnosticLogs: StateFlow<List<LiteRtDiagnosticLogEntry>> = localModelManager.diagnosticLogs
     val liteRtDiagnosticSummary: StateFlow<LiteRtDiagnosticSummary> = localModelManager.diagnosticSummary
     val streamParserTelemetry: StateFlow<StreamParserTelemetrySnapshot> = StreamParserTelemetry.snapshot
+    val aiCoreStatus: StateFlow<com.mote.app.ai.AiCoreStatusSnapshot> = localModelManager.aiCoreStatus
+    val toolSyncVerifications: StateFlow<List<com.mote.app.control.ToolSyncVerificationRecord>> =
+        localModelManager.toolSyncVerifications
 
     // Inline Generative UI & Clock widgets attached to assistant chat messages by normalized text key
     private val _inChatUiPartsByText = MutableStateFlow<Map<String, List<InChatUiPart>>>(emptyMap())
@@ -743,6 +746,7 @@ class MoteViewModel(
                 }
                 _lastAdaptiveRouteNote.value = preRoute.engineReason
 
+                val selectedHybridMode = com.mote.app.model.MoteInferenceMode.fromString(currentPrefs.hybridInferenceMode)
                 val streamFlow = if (useLocalLiteRt) {
                     val localSystemInstruction = buildString {
                         appendLine(systemPrompt)
@@ -776,12 +780,15 @@ class MoteViewModel(
                         config = llmConfig.value,
                         attachedBitmap = attachedBitmap,
                         clockContext = clockContext,
-                        enabledToolIds = enabledToolIds
+                        enabledToolIds = enabledToolIds,
+                        inferenceMode = selectedHybridMode,
+                        enableNativeFunctionCalling = currentPrefs.nativeFunctionCallingEnabled
                     )
                 }
 
                 var cleanFinalAnswer = ""
                 var latestElapsedMs = 0L
+                var resolvedEngineUsed = if (useLocalLiteRt) EngineUsed.LOCAL_NANO else EngineUsed.CLOUD_FLASH
                 val finalToolBlocks = mutableListOf<String>()
 
                 streamFlow.collect { event ->
@@ -800,6 +807,7 @@ class MoteViewModel(
                             cleanFinalAnswer = event.fullText
                             finalToolBlocks.clear()
                             finalToolBlocks.addAll(event.completedToolJsonBlocks)
+                            resolvedEngineUsed = if (useLocalLiteRt) EngineUsed.LOCAL_NANO else event.engineUsed
                             _lastMetrics.value = event.metrics
                         }
                     }
@@ -910,7 +918,7 @@ class MoteViewModel(
                         botId = botId,
                         botName = botName,
                         text = cleanAnswer,
-                        engineUsed = if (useLocalLiteRt) EngineUsed.LOCAL_NANO.name else EngineUsed.CLOUD_FLASH.name
+                        engineUsed = resolvedEngineUsed.name
                     ).onFailure { err ->
                         _actionError.value = err.localizedMessage ?: "Failed to save assistant reply."
                     }
@@ -1008,10 +1016,14 @@ class MoteViewModel(
                 _actionError.value = err.localizedMessage ?: "Failed to save prompt to chat history."
             }
 
+            val requestedHybridMode = com.mote.app.model.MoteInferenceMode.fromString(
+                studioPrefs.value.hybridInferenceMode
+            )
             router.generateControlCard(
                 userPrompt = userPrompt,
                 botSystemPrompt = botSystemPrompt,
                 redactedScreenContext = redactedScreenContext,
+                requestedMode = requestedHybridMode,
                 isForeground = true,
                 modelName = llmConfig.value.modelName
             ).onSuccess { result ->
@@ -1241,8 +1253,36 @@ class MoteViewModel(
         }
     }
 
+    fun setHybridInferenceMode(mode: com.mote.app.model.MoteInferenceMode) {
+        viewModelScope.launch {
+            localModelManager.updatePrefs { it.copy(hybridInferenceMode = mode.name) }
+            _utilityStatus.value = "Firebase Hybrid SDK mode set to ${mode.name.replace('_', ' ').lowercase(Locale.US)}."
+        }
+    }
+
+    fun setNativeFunctionCallingEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            localModelManager.updatePrefs { it.copy(nativeFunctionCallingEnabled = enabled) }
+            _utilityStatus.value = if (enabled) {
+                "Firebase Native Function Calling (Tool.functionDeclarations) enabled."
+            } else {
+                "Using streamed <<<TOOL_CALL>>> protocol only."
+            }
+        }
+    }
+
+    fun refreshAiCoreStatus() {
+        localModelManager.refreshAiCoreStatus()
+    }
+
+    fun downloadGeminiNanoViaAiCore() {
+        localModelManager.downloadGeminiNanoViaAiCore()
+        _utilityStatus.value = "Requesting Gemini Nano download via Android AICore..."
+    }
+
     override fun onCleared() {
         super.onCleared()
+        localModelManager.aiCoreNanoManager.close()
         localModelManager.shutdown()
         lanServer.stop()
     }

@@ -64,11 +64,15 @@ dependencies {
     // Firebase Suite (BoM-managed versions)
     implementation(platform("com.google.firebase:firebase-bom:35.2.0"))
     implementation("com.google.firebase:firebase-ai")
+    implementation("com.google.firebase:firebase-ai-ondevice:16.0.0-beta08")
     implementation("com.google.firebase:firebase-appcheck-debug")
     implementation("com.google.firebase:firebase-appcheck-recaptcha")
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-config")
+
+    // Android AICore / ML Kit GenAI Prompt API (real Gemini Nano availability & model download checks)
+    implementation("com.google.mlkit:genai-prompt:1.0.0-beta4")
 
     // Google AI Edge LiteRT-LM (real on-device tiny LLM inference for .litertlm / .task models)
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.19.1")
