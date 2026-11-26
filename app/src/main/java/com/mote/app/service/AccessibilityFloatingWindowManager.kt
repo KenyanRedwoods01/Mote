@@ -161,13 +161,18 @@ class AccessibilityFloatingWindowManager(
     }
 
     fun setPrivacyHidden(hidden: Boolean) {
+        if (hiddenForPrivacy == hidden) return
         hiddenForPrivacy = hidden
+        if (isDestroyed) return
         mainHandler.post {
-            overlayContainer?.visibility = if (hidden) View.GONE else View.VISIBLE
+            if (!isDestroyed) {
+                overlayContainer?.visibility = if (hidden) View.GONE else View.VISIBLE
+            }
         }
     }
 
     fun hide() {
+        if (isDestroyed) return
         mainHandler.post {
             overlayContainer?.visibility = View.GONE
             SystemOverlayStateBus.markAccessibilityOverlayRunning(false)
@@ -176,9 +181,13 @@ class AccessibilityFloatingWindowManager(
 
     fun detach() {
         val cleanup = Runnable {
-            composeView?.disposeComposition()
+            runCatching { composeView?.disposeComposition() }
             overlayContainer?.let { v ->
-                runCatching { windowManager?.removeViewImmediate(v) }
+                runCatching {
+                    if (v.isAttachedToWindow) {
+                        windowManager?.removeViewImmediate(v)
+                    }
+                }
             }
             overlayContainer = null
             composeView = null

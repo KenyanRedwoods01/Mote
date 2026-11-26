@@ -80,16 +80,28 @@ fun ModelToolsRegistryCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Icon(Icons.Outlined.Extension, contentDescription = null, tint = CloudFlashCobalt, modifier = Modifier.size(18.dp))
-                Column {
-                    Text("MODEL TOOLS REGISTRY", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = MoteNavy)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "MODEL TOOLS REGISTRY",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MoteNavy,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Text(
                         text = "$enabledCount of ${tools.size} AI tools active in chat streaming",
                         fontSize = 11.sp,
-                        color = SlateMuted
+                        color = SlateMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -103,7 +115,9 @@ fun ModelToolsRegistryCard(
                     text = if (enabledCount > 0) "LIVE" else "PAUSED",
                     fontSize = 9.5.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (enabledCount > 0) Color(0xFF15803D) else SlateMuted
+                    color = if (enabledCount > 0) Color(0xFF15803D) else SlateMuted,
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
         }
@@ -227,32 +241,34 @@ fun ModelToolsRegistryCard(
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Text(
+                                    text = tool.displayName,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (enabled) MoteNavy else SlateMuted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .background(tokens.surface)
+                                        .border(0.75.dp, accent.copy(alpha = 0.25f), RoundedCornerShape(999.dp))
+                                        .padding(horizontal = 7.dp, vertical = 2.dp)
                                 ) {
                                     Text(
-                                        text = tool.displayName,
-                                        fontSize = 13.5.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (enabled) MoteNavy else SlateMuted,
+                                        text = liveBadge,
+                                        fontSize = 9.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = accent,
                                         maxLines = 1,
+                                        softWrap = false,
                                         overflow = TextOverflow.Ellipsis
                                     )
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(999.dp))
-                                            .background(tokens.surface)
-                                            .padding(horizontal = 6.dp, vertical = 1.5.dp)
-                                    ) {
-                                        Text(
-                                            text = liveBadge,
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = accent
-                                        )
-                                    }
                                 }
                                 Text(
                                     text = tool.description,
@@ -373,22 +389,34 @@ fun ToolPermissionsManagerCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Icon(Icons.Outlined.AdminPanelSettings, contentDescription = null, tint = LocalNanoEmerald, modifier = Modifier.size(19.dp))
-                Column {
-                    Text("ANDROID TOOL PERMISSIONS", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = MoteNavy)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "ANDROID TOOL PERMISSIONS",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MoteNavy,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Text(
                         text = "${permissions.grantedCount}/${permissions.totalCount} capabilities authorized on device",
                         fontSize = 11.sp,
-                        color = SlateMuted
+                        color = SlateMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
             IconButton(
                 onClick = onRefreshPermissions,
-                modifier = Modifier.size(38.dp).testTag("refresh_permissions_button")
+                modifier = Modifier.size(48.dp).testTag("refresh_permissions_button")
             ) {
                 Icon(Icons.Outlined.Refresh, contentDescription = "Refresh permissions", tint = SlateMuted, modifier = Modifier.size(18.dp))
             }
@@ -687,7 +715,14 @@ fun ToolExecutionAuditCard(
                                 .background(badgeBg)
                                 .padding(horizontal = 7.dp, vertical = 2.dp)
                         ) {
-                            Text(badgeLabel, fontSize = 8.5.sp, fontWeight = FontWeight.Bold, color = badgeFg)
+                            Text(
+                                text = badgeLabel,
+                                fontSize = 8.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = badgeFg,
+                                maxLines = 1,
+                                softWrap = false
+                            )
                         }
                     }
                 }
@@ -706,67 +741,82 @@ private fun PermissionRow(
     tag: String,
     onClick: () -> Unit
 ) {
+    val tokens = LocalMoteColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(11.dp))
-            .background(Color(0xFFF8FAFC))
-            .padding(horizontal = 10.dp, vertical = 9.dp),
+            .background(tokens.surfaceSubtle)
+            .padding(horizontal = 10.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(
-            modifier = Modifier.weight(1f).padding(end = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 10.dp),
+            verticalAlignment = Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(9.dp)
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
                 tint = if (granted) LocalNanoEmerald else Color(0xFFD97706),
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier
+                    .padding(top = 2.dp)
+                    .size(18.dp)
             )
-            Column(modifier = Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Text(
+                    text = title,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MoteNavy,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 16.sp
+                )
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(if (granted) Color(0xFFDCFCE7) else Color(0xFFFEF3C7))
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        text = title,
-                        fontSize = 12.5.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MoteNavy,
+                        text = if (granted) "Granted" else "Needed",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (granted) Color(0xFF15803D) else Color(0xFFB45309),
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        softWrap = false
                     )
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(if (granted) Color(0xFFDCFCE7) else Color(0xFFFEF3C7))
-                            .padding(horizontal = 6.dp, vertical = 1.dp)
-                    ) {
-                        Text(
-                            text = if (granted) "Granted" else "Needed",
-                            fontSize = 8.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (granted) Color(0xFF15803D) else Color(0xFFB45309)
-                        )
-                    }
                 }
-                Text(subtitle, fontSize = 10.5.sp, color = SlateMuted, lineHeight = 14.sp)
+                Text(
+                    text = subtitle,
+                    fontSize = 10.5.sp,
+                    color = SlateMuted,
+                    lineHeight = 14.sp
+                )
             }
         }
         OutlinedButton(
             onClick = onClick,
-            shape = RoundedCornerShape(8.dp),
-            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-            modifier = Modifier.heightIn(min = 36.dp).testTag(tag)
+            shape = RoundedCornerShape(9.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            modifier = Modifier
+                .heightIn(min = 38.dp)
+                .testTag(tag)
         ) {
             Text(
                 text = actionLabel,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (granted) SlateMuted else CloudFlashCobalt
+                color = if (granted) SlateMuted else CloudFlashCobalt,
+                maxLines = 1,
+                softWrap = false
             )
         }
     }

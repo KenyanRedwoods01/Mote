@@ -955,7 +955,12 @@ class LocalModelManager(context: Context) {
     }
 
     fun refreshToolPermissions() {
-        _toolPermissions.value = ToolPermissionInspector.inspect(appContext)
+        scope.launch(Dispatchers.IO) {
+            val inspected = ToolPermissionInspector.inspect(appContext)
+            if (_toolPermissions.value != inspected) {
+                _toolPermissions.value = inspected
+            }
+        }
     }
 
     fun shutdown() {

@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.os.Build
+import android.provider.Settings
 import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.WindowManager
@@ -25,6 +26,7 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.mote.app.R
 import com.mote.app.ui.HybridInferenceActivity
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.roundToInt
 
 /**
@@ -41,6 +43,9 @@ class BotOverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModel
     override val savedStateRegistry: SavedStateRegistry get() = savedStateController.savedStateRegistry
     override val viewModelStore: ViewModelStore = ViewModelStore()
 
+    private val isOverlayAttached = AtomicBoolean(false)
+    private val isShuttingDown = AtomicBoolean(false)
+
     private var windowManager: WindowManager? = null
     private var overlayContainer: DraggableOverlayFrameLayout? = null
     private var overlayView: ComposeView? = null
@@ -50,15 +55,24 @@ class BotOverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModel
         savedStateController.performAttach()
         savedStateController.performRestore(null)
         super.onCreate()
-        OverlayCustomizationStore.ensureLoaded(this)
+        isShuttingDown.set(false)
+        runCatching { OverlayCustomizationStore.ensureLoaded(applicationContext) }
         SystemOverlayStateBus.markServiceRunning(true)
         runCatching { startForegroundNotification() }
-        runCatching { attachLottieVoiceOverlay() }
+        runCatching { attachLottieVoiceOverlayIfPermitted() }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
+        if (!isShuttingDown.get() && !isOverlayAttached.get()) {
+            runCatching { attachLottieVoiceOverlayIfPermitted() }
+        }
+        return START_NOT_STICKY
     }
 
     private fun startForegroundNotification() {
         val channelId = "mote_overlay_channel"
-        val nm = getSystemService(NotificationManager::class.java)
+        val nm = getSystemService(NotificationManager::class.java) ?: return
         nm.createNotificationChannel(
             NotificationChannel(channelId, "Mote Floating Agent", NotificationManager.IMPORTANCE_MIN)
         )
@@ -89,75 +103,105 @@ class BotOverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModel
         runCatching { startActivity(intent) }
     }
 
-    private fun attachLottieVoiceOverlay() {
-        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+    private fun attachLottieVoiceOverlayIfPermitted() {
+        if (isShuttingDown.get()) return
+        if (!Settings.canDrawOverlays(this)) {
+            stopSelf()
+            return
+        }
+        if (!isOverlayAttached.compareAndSet(false, true)) return
+
+        val wm = getSystemService(WINDOW_SERVICE) as? WindowManager
+        if (wm == null) {
+            isOverlayAttached.set(false)
+            return
+        }
         windowManager = wm
 
-        val themedContext = ContextThemeWrapper(this, R.style.Theme_Mote)
-        val metrics = resources.displayMetrics
-        val screenWidthPx = metrics.widthPixels
-        val screenHeightPx = metrics.heightPixels
-        val edgeMarginPx = (8f * metrics.density).roundToInt()
-        val orbApproxPx = (OverlayCustomizationStore.config.value.orbSizeDp * metrics.density).roundToInt()
+        try {
+            val themedContext = ContextThemeWrapper(this, R.style.Theme_Mote)
+            val metrics = resources.displayMetrics
+            val screenWidthPx = metrics.widthPixels
+            val screenHeightPx = metrics.heightPixels
+            val edgeMarginPx = (8f * metrics.density).roundToInt()
+            val orbApproxPx = (OverlayCustomizationStore.config.value.orbSizeDp * metrics.density).roundToInt()
 
-        val defaultX = (screenWidthPx - orbApproxPx - edgeMarginPx).coerceAtLeast(edgeMarginPx)
-        val defaultY = (screenHeightPx * 0.36f).roundToInt()
-        val (rawSavedX, rawSavedY) = OverlayCustomizationStore.loadSavedPosition(this, defaultX, defaultY)
-        val savedX = rawSavedX.coerceIn(0, (screenWidthPx - orbApproxPx).coerceAtLeast(0))
-        val savedY = rawSavedY.coerceIn(0, (screenHeightPx - orbApproxPx).coerceAtLeast(0))
+            val defaultX = (screenWidthPx - orbApproxPx - edgeMarginPx).coerceAtLeast(edgeMarginPx)
+            val defaultY = (screenHeightPx * 0.36f).roundToInt()
+            val (rawSavedX, rawSavedY) = OverlayCustomizationStore.loadSavedPosition(this, defaultX, defaultY)
+            val savedX = rawSavedX.coerceIn(0, (screenWidthPx - orbApproxPx).coerceAtLeast(0))
+            val savedY = rawSavedY.coerceIn(0, (screenHeightPx - orbApproxPx).coerceAtLeast(0))
 
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = savedX
-            y = savedY
-        }
-        overlayLayoutParams = params
-
-        // CRITICAL: Attach ViewTree owners on the WINDOW ROOT VIEW (container) as well as ComposeView
-        val container = DraggableOverlayFrameLayout(
-            context = themedContext,
-            windowManager = wm,
-            layoutParamsProvider = { overlayLayoutParams },
-            onDragStateChanged = { dragging ->
-                SystemOverlayStateBus.setOverlayDragging(dragging)
-            },
-            onPositionSettled = { x, y ->
-                OverlayCustomizationStore.savePosition(this, x, y)
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = savedX
+                y = savedY
             }
-        ).apply {
-            setViewTreeLifecycleOwner(this@BotOverlayService)
-            setViewTreeViewModelStoreOwner(this@BotOverlayService)
-            setViewTreeSavedStateRegistryOwner(this@BotOverlayService)
-        }
+            overlayLayoutParams = params
 
-        val view = ComposeView(themedContext).apply {
-            setViewTreeLifecycleOwner(this@BotOverlayService)
-            setViewTreeViewModelStoreOwner(this@BotOverlayService)
-            setViewTreeSavedStateRegistryOwner(this@BotOverlayService)
-            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
-            setContent {
-                val hudState by SystemOverlayStateBus.state.collectAsState()
-                // Yield seamlessly when AccessibilityFloatingWindowManager is already hosting the overlay
-                if (!hudState.isAccessibilityOverlayActive && !hudState.isHiddenForPrivacy) {
-                    SystemAssistantOverlayContent(
-                        hostBadgeLabel = "WM",
-                        onLaunchBot = { bot -> launchOverlayBot(bot) }
-                    )
+            // CRITICAL: Attach ViewTree owners on the WINDOW ROOT VIEW (container) as well as ComposeView
+            val container = DraggableOverlayFrameLayout(
+                context = themedContext,
+                windowManager = wm,
+                layoutParamsProvider = { overlayLayoutParams },
+                onDragStateChanged = { dragging ->
+                    SystemOverlayStateBus.setOverlayDragging(dragging)
+                },
+                onPositionSettled = { x, y ->
+                    OverlayCustomizationStore.savePosition(this, x, y)
+                }
+            ).apply {
+                setViewTreeLifecycleOwner(this@BotOverlayService)
+                setViewTreeViewModelStoreOwner(this@BotOverlayService)
+                setViewTreeSavedStateRegistryOwner(this@BotOverlayService)
+            }
+
+            val view = ComposeView(themedContext).apply {
+                setViewTreeLifecycleOwner(this@BotOverlayService)
+                setViewTreeViewModelStoreOwner(this@BotOverlayService)
+                setViewTreeSavedStateRegistryOwner(this@BotOverlayService)
+                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+                setContent {
+                    val hudState by SystemOverlayStateBus.state.collectAsState()
+                    // Yield seamlessly when AccessibilityFloatingWindowManager is already hosting the overlay
+                    if (!hudState.isAccessibilityOverlayActive && !hudState.isHiddenForPrivacy) {
+                        SystemAssistantOverlayContent(
+                            hostBadgeLabel = "WM",
+                            onLaunchBot = { bot -> launchOverlayBot(bot) }
+                        )
+                    }
+                }
+            }
+            container.addView(view)
+            overlayView = view
+            overlayContainer = container
+            wm.addView(container, params)
+        } catch (_: Throwable) {
+            detachOverlaySafely()
+        }
+    }
+
+    private fun detachOverlaySafely() {
+        isOverlayAttached.set(false)
+        runCatching { overlayView?.disposeComposition() }
+        overlayContainer?.let { view ->
+            runCatching {
+                if (view.isAttachedToWindow) {
+                    windowManager?.removeViewImmediate(view)
                 }
             }
         }
-        container.addView(view)
-        overlayView = view
-        overlayContainer = container
-        wm.addView(container, params)
+        overlayContainer = null
+        overlayView = null
+        overlayLayoutParams = null
     }
 
     companion object {
@@ -167,13 +211,10 @@ class BotOverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModel
     }
 
     override fun onDestroy() {
+        isShuttingDown.set(true)
         SystemOverlayStateBus.setOverlayDragging(false)
         SystemOverlayStateBus.markServiceRunning(false)
-        overlayView?.disposeComposition()
-        overlayContainer?.let { runCatching { windowManager?.removeViewImmediate(it) } }
-        overlayContainer = null
-        overlayView = null
-        overlayLayoutParams = null
+        detachOverlaySafely()
         runCatching { viewModelStore.clear() }
         super.onDestroy()
     }

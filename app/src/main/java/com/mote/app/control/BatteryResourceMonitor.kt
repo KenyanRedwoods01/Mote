@@ -111,7 +111,7 @@ class BatteryResourceMonitor(context: Context) {
 
     fun refreshNow(): BatteryTelemetrySnapshot {
         val sample = readHardwareSample(trackedModelName, trackedInferenceActive)
-        _telemetry.value = sample
+        emitIfChanged(sample)
         return sample
     }
 
@@ -124,9 +124,26 @@ class BatteryResourceMonitor(context: Context) {
         if (pollingJob?.isActive == true) return
         pollingJob = scope.launch {
             while (isActive) {
-                _telemetry.value = readHardwareSample(trackedModelName, trackedInferenceActive)
-                delay(if (trackedInferenceActive) 1200L else 3000L)
+                emitIfChanged(readHardwareSample(trackedModelName, trackedInferenceActive))
+                delay(if (trackedInferenceActive) 4_000L else 15_000L)
             }
+        }
+    }
+
+    private fun emitIfChanged(next: BatteryTelemetrySnapshot) {
+        val prev = _telemetry.value
+        val changed = prev.batteryPercent != next.batteryPercent ||
+            prev.isCharging != next.isCharging ||
+            kotlin.math.abs(prev.temperatureC - next.temperatureC) >= 0.4f ||
+            kotlin.math.abs(prev.dischargeMa - next.dischargeMa) >= 60 ||
+            prev.thermalLevel != next.thermalLevel ||
+            prev.activeModelName != next.activeModelName ||
+            prev.isInferenceActive != next.isInferenceActive ||
+            prev.sessionBatteryDropPct != next.sessionBatteryDropPct ||
+            prev.alertSeverity != next.alertSeverity ||
+            prev.alertTitle != next.alertTitle
+        if (changed) {
+            _telemetry.value = next
         }
     }
 

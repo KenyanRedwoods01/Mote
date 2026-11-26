@@ -181,32 +181,32 @@ fun ModelsStudioScreen(
     ) {
         IosTopNavBar(
             title = "Model Hub",
-            subtitle = "RAM ${hardware.availableRamMb}MB free · ${formatModelBytes(hardware.modelsDiskUsageBytes)} in Room"
+            subtitle = "${hardware.availableRamMb}MB RAM free · ${formatModelBytes(hardware.modelsDiskUsageBytes)} Room"
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 OutlinedButton(
                     onClick = { showCustomUrlDialog = true },
                     shape = RoundedCornerShape(999.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                    contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp),
                     modifier = Modifier
-                        .heightIn(min = 42.dp)
+                        .heightIn(min = 40.dp)
                         .testTag("add_custom_model_url_button")
                 ) {
-                    Icon(Icons.Outlined.Link, contentDescription = null, modifier = Modifier.size(15.dp), tint = MoteNavy)
+                    Icon(Icons.Outlined.Link, contentDescription = null, modifier = Modifier.size(14.dp), tint = MoteNavy)
                     Spacer(Modifier.width(3.dp))
-                    Text("URL", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MoteNavy)
+                    Text("URL", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MoteNavy, maxLines = 1, softWrap = false)
                 }
                 OutlinedButton(
                     onClick = { importLauncher.launch(arrayOf("*/*")) },
                     shape = RoundedCornerShape(999.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                    contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp),
                     modifier = Modifier
-                        .heightIn(min = 42.dp)
+                        .heightIn(min = 40.dp)
                         .testTag("import_local_model_button")
                 ) {
-                    Icon(Icons.Outlined.FileOpen, contentDescription = null, modifier = Modifier.size(15.dp), tint = MoteNavy)
+                    Icon(Icons.Outlined.FileOpen, contentDescription = null, modifier = Modifier.size(14.dp), tint = MoteNavy)
                     Spacer(Modifier.width(3.dp))
-                    Text("Import", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MoteNavy)
+                    Text("Import", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MoteNavy, maxLines = 1, softWrap = false)
                 }
                 FilledTonalButton(
                     onClick = { showCreateSheet = true },
@@ -215,14 +215,14 @@ fun ModelsStudioScreen(
                         containerColor = LocalMoteColors.current.primaryActionBg,
                         contentColor = Color.White
                     ),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                    contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp),
                     modifier = Modifier
-                        .heightIn(min = 42.dp)
+                        .heightIn(min = 40.dp)
                         .testTag("new_persona_button")
                 ) {
-                    Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(3.dp))
-                    Text("Bot", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                    Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(2.dp))
+                    Text("Bot", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                 }
             }
         }
@@ -312,7 +312,7 @@ fun ModelsStudioScreen(
                 .weight(1f)
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(bottom = 112.dp)
+            contentPadding = PaddingValues(top = 4.dp, bottom = 138.dp)
         ) {
             // 1. Truthful Active Runtime Status Card (On-Device RAM vs Cloud API)
             item(key = "active_runtime_status") {

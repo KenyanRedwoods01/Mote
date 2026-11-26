@@ -39,16 +39,24 @@ data class AppControlActionResult(
 class MoteAccessibilityService : AccessibilityService() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val isShuttingDown = java.util.concurrent.atomic.AtomicBoolean(false)
     private var floatingWindowManager: AccessibilityFloatingWindowManager? = null
     private var pendingAttachRunnable: Runnable? = null
+    @Volatile
+    private var lastPublishedPackage: String? = null
+    @Volatile
+    private var lastPublishedBlocked: Boolean? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        isShuttingDown.set(false)
         instance = this
-        runCatching { OverlayCustomizationStore.ensureLoaded(this) }
+        lastPublishedPackage = null
+        lastPublishedBlocked = null
+        runCatching { OverlayCustomizationStore.ensureLoaded(applicationContext) }
         pendingAttachRunnable?.let { mainHandler.removeCallbacks(it) }
         val attachTask = Runnable {
-            if (instance !== this) return@Runnable
+            if (isShuttingDown.get() || instance !== this) return@Runnable
             runCatching {
                 val existing = floatingWindowManager
                 val mgr = if (existing == null || existing.isDestroyed) {
@@ -64,15 +72,27 @@ class MoteAccessibilityService : AccessibilityService() {
         }
         pendingAttachRunnable = attachTask
         // Brief delay ensures the AccessibilityService window token is fully bound before addView
-        mainHandler.postDelayed(attachTask, 220L)
+        mainHandler.postDelayed(attachTask, 260L)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Zero idle CPU: track foreground package and auto-hide overlay on sensitive apps
+        if (event == null || isShuttingDown.get() || instance !== this) return
+        val eventType = event.eventType
+        if (eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            eventType != AccessibilityEvent.TYPE_WINDOWS_CHANGED
+        ) {
+            return
+        }
+        val rawPkg = runCatching { event.packageName?.toString() }.getOrNull()
+        val pkg = rawPkg?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        val blocked = runCatching { PrivacyGuard.isPackageBlocked(pkg) }.getOrDefault(false)
+        if (pkg == lastPublishedPackage && blocked == lastPublishedBlocked) {
+            return
+        }
+        lastPublishedPackage = pkg
+        lastPublishedBlocked = blocked
+        currentPackageName = pkg
         runCatching {
-            val pkg = event?.packageName?.toString()?.takeIf { it.isNotBlank() } ?: return@runCatching
-            currentPackageName = pkg
-            val blocked = PrivacyGuard.isPackageBlocked(pkg)
             floatingWindowManager?.setPrivacyHidden(blocked)
             SystemOverlayStateBus.publishForegroundPackage(pkg, blocked)
         }
@@ -91,8 +111,11 @@ class MoteAccessibilityService : AccessibilityService() {
     }
 
     private fun teardownOverlayAndCursor() {
+        isShuttingDown.set(true)
         pendingAttachRunnable?.let { mainHandler.removeCallbacks(it) }
         pendingAttachRunnable = null
+        lastPublishedPackage = null
+        lastPublishedBlocked = null
         runCatching { SystemCursorOverlayManager.hideNow() }
         runCatching { floatingWindowManager?.detach() }
         floatingWindowManager = null
@@ -100,6 +123,7 @@ class MoteAccessibilityService : AccessibilityService() {
     }
 
     fun showFloatingOverlay(): Boolean {
+        if (isShuttingDown.get() || instance !== this) return false
         return runCatching {
             val existing = floatingWindowManager
             val mgr = if (existing == null || existing.isDestroyed) {

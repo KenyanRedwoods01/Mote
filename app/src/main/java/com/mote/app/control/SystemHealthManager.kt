@@ -68,8 +68,10 @@ class SystemHealthManager(context: Context) {
                 Intent.ACTION_POWER_CONNECTED,
                 Intent.ACTION_POWER_DISCONNECTED,
                 PowerManager.ACTION_POWER_SAVE_MODE_CHANGED -> {
-                    _health.value = readCurrentHealth(
-                        if (intent.action == Intent.ACTION_BATTERY_CHANGED) intent else null
+                    emitHealthIfChanged(
+                        readCurrentHealth(
+                            if (intent.action == Intent.ACTION_BATTERY_CHANGED) intent else null
+                        )
                     )
                 }
             }
@@ -96,9 +98,23 @@ class SystemHealthManager(context: Context) {
                 ContextCompat.RECEIVER_NOT_EXPORTED
             )
             receiverRegistered = true
-            _health.value = readCurrentHealth(sticky)
+            emitHealthIfChanged(readCurrentHealth(sticky))
         } catch (_: Exception) {
-            _health.value = readCurrentHealth(null)
+            emitHealthIfChanged(readCurrentHealth(null))
+        }
+    }
+
+    private fun emitHealthIfChanged(next: SystemHealthSnapshot) {
+        val prev = _health.value
+        val changed = prev.batteryPct != next.batteryPct ||
+            prev.isCharging != next.isCharging ||
+            kotlin.math.abs(prev.temperatureC - next.temperatureC) >= 0.4f ||
+            prev.thermalLevel != next.thermalLevel ||
+            prev.isPowerSaveMode != next.isPowerSaveMode ||
+            prev.recommendedTarget != next.recommendedTarget ||
+            prev.updatedAtEpochMs == 0L
+        if (changed) {
+            _health.value = next
         }
     }
 
@@ -108,7 +124,7 @@ class SystemHealthManager(context: Context) {
         } catch (_: Exception) {
             null
         }
-        return readCurrentHealth(sticky).also { _health.value = it }
+        return readCurrentHealth(sticky).also { emitHealthIfChanged(it) }
     }
 
     /**

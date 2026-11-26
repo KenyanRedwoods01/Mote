@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mote.app.ai.AiCoreAvailabilityState
@@ -69,6 +70,14 @@ fun FirebaseHybridStatusCard(
         AiCoreAvailabilityState.UNAVAILABLE -> Color(0xFF64748B)
         AiCoreAvailabilityState.ERROR -> Color(0xFFDC2626)
     }
+    val compactStatusLabel = when (aiCoreStatus.state) {
+        AiCoreAvailabilityState.AVAILABLE -> "Nano Ready"
+        AiCoreAvailabilityState.DOWNLOADABLE -> "Downloadable"
+        AiCoreAvailabilityState.DOWNLOADING -> "Downloading"
+        AiCoreAvailabilityState.CHECKING -> "Checking"
+        AiCoreAvailabilityState.UNAVAILABLE -> "Cloud Fallback"
+        AiCoreAvailabilityState.ERROR -> "Check Error"
+    }
 
     val verifiedSyncCount = recentSyncRecords.count { it.verified }
     val latestSync = recentSyncRecords.firstOrNull()
@@ -89,6 +98,9 @@ fun FirebaseHybridStatusCard(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -106,17 +118,21 @@ fun FirebaseHybridStatusCard(
                         modifier = Modifier.size(18.dp)
                     )
                 }
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Firebase AI Logic Hybrid SDK",
-                        fontSize = 14.sp,
+                        fontSize = 13.5.sp,
                         fontWeight = FontWeight.Bold,
-                        color = tokens.onSurface
+                        color = tokens.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "OnDeviceConfig · AICore Gemini Nano · Native Tools",
+                        text = "OnDeviceConfig · Gemini Nano · Native Tools",
                         fontSize = 11.sp,
-                        color = tokens.onSurfaceSecondary
+                        color = tokens.onSurfaceSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -137,10 +153,12 @@ fun FirebaseHybridStatusCard(
                             .background(statusAccent)
                     )
                     Text(
-                        text = aiCoreStatus.state.label,
+                        text = compactStatusLabel,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = statusAccent
+                        color = statusAccent,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }
@@ -183,7 +201,9 @@ fun FirebaseHybridStatusCard(
                         text = label,
                         fontSize = 11.5.sp,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                        color = if (isSelected) Color.White else tokens.onSurface
+                        color = if (isSelected) Color.White else tokens.onSurface,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }

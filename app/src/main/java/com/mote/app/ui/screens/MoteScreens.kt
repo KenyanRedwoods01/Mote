@@ -90,7 +90,9 @@ fun SecurityCenterScreen(
                 text = "${toolPermissions.grantedCount}/${toolPermissions.totalCount} Perms",
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = LocalNanoEmerald
+                color = LocalNanoEmerald,
+                maxLines = 1,
+                softWrap = false
             )
         }
         LazyColumn(
@@ -98,7 +100,7 @@ fun SecurityCenterScreen(
                 .weight(1f)
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(bottom = 112.dp)
+            contentPadding = PaddingValues(top = 4.dp, bottom = 138.dp)
         ) {
             // 0. Live Command Widgets Deck (Clock, Wi-Fi/Network, Camera, Live Cursor)
             item(key = "tools_advanced_live_widgets_deck") {

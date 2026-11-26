@@ -716,37 +716,46 @@ class MoteViewModel(
                 }.trim()
                 val enabledToolIds = localModelManager.toolRegistry.enabledToolIds(studioPrefs.value)
 
-                // Step 1: Battery & Thermal Adaptive Inference Routing via SystemHealthManager
+                // Step 1: Official Firebase GenerativeModel Hybrid Routing (OnDeviceConfig + automatic cloud fallback)
+                // Manual LiteRT-LM is used ONLY when the user explicitly opts into offline LiteRT-LM chat with a model already loaded in RAM.
                 val currentPrefs = studioPrefs.value
-                var loadedLocal = localModelManager.loadedModel.value
-                val savedLocalId = currentPrefs.activeLocalModelId
-                val hasDownloadedSavedLocal = !savedLocalId.isNullOrBlank() &&
-                    localModelManager.models.value.any {
-                        it.id == savedLocalId && it.status == LocalModelDownloadStatus.DOWNLOADED
-                    }
+                val loadedLocal = localModelManager.loadedModel.value
+                val userExplicitlyWantsLoadedLiteRt = (preferLoadedLocalChat.value || currentPrefs.preferLocalOfflineChat) &&
+                    loadedLocal?.supportsOnDeviceInference == true &&
+                    attachedBitmap == null
 
-                val preRoute = localModelManager.systemHealth.resolveInferenceRoute(
+                val healthDecision = localModelManager.systemHealth.resolveInferenceRoute(
                     adaptiveEnabled = currentPrefs.adaptiveThermalBatteryRouting,
-                    userPrefersLocal = preferLoadedLocalChat.value || currentPrefs.preferLocalOfflineChat,
-                    hasLocalModelReady = (loadedLocal?.supportsOnDeviceInference == true) || hasDownloadedSavedLocal,
+                    userPrefersLocal = userExplicitlyWantsLoadedLiteRt,
+                    hasLocalModelReady = loadedLocal?.supportsOnDeviceInference == true,
                     hasAttachedImage = attachedBitmap != null
                 )
 
-                var useLocalLiteRt = preRoute.useLocalEngine
-                if (useLocalLiteRt && loadedLocal == null && !savedLocalId.isNullOrBlank()) {
-                    _chatStreamState.value = ChatStreamUiState.Streaming(
-                        partialText = "",
-                        botName = botName,
-                        elapsedMs = 0L,
-                        pendingToolHint = "Adaptive Health: Loading local LiteRT-LM model into RAM..."
-                    )
-                    val loadedResult = localModelManager.loadModel(savedLocalId)
-                    loadedLocal = loadedResult.getOrNull()
-                    useLocalLiteRt = loadedLocal?.supportsOnDeviceInference == true
+                val useLocalLiteRt = userExplicitlyWantsLoadedLiteRt && healthDecision.useLocalEngine
+                val configuredHybridMode = com.mote.app.model.MoteInferenceMode.fromString(currentPrefs.hybridInferenceMode)
+                val effectiveHybridMode = when {
+                    attachedBitmap != null -> com.mote.app.model.MoteInferenceMode.PREFER_IN_CLOUD
+                    currentPrefs.adaptiveThermalBatteryRouting &&
+                        localModelManager.systemHealth.health.value.recommendedTarget == com.mote.app.control.AdaptiveInferenceTarget.CLOUD_GEMINI &&
+                        configuredHybridMode == com.mote.app.model.MoteInferenceMode.PREFER_ON_DEVICE ->
+                        com.mote.app.model.MoteInferenceMode.PREFER_IN_CLOUD
+                    else -> configuredHybridMode
                 }
-                _lastAdaptiveRouteNote.value = preRoute.engineReason
 
-                val selectedHybridMode = com.mote.app.model.MoteInferenceMode.fromString(currentPrefs.hybridInferenceMode)
+                val modeDisplayName = when (effectiveHybridMode) {
+                    com.mote.app.model.MoteInferenceMode.PREFER_ON_DEVICE -> "Prefer On-Device"
+                    com.mote.app.model.MoteInferenceMode.ONLY_ON_DEVICE -> "Only On-Device"
+                    com.mote.app.model.MoteInferenceMode.PREFER_IN_CLOUD -> "Prefer Cloud"
+                    com.mote.app.model.MoteInferenceMode.ONLY_IN_CLOUD -> "Only Cloud"
+                }
+
+                _lastAdaptiveRouteNote.value = when {
+                    useLocalLiteRt -> "Manual LiteRT-LM offline model (${loadedLocal?.displayName}) active."
+                    effectiveHybridMode != configuredHybridMode ->
+                        "Firebase Hybrid SDK: Adaptive health switched OnDeviceConfig to $modeDisplayName."
+                    else -> "Firebase Hybrid SDK ($modeDisplayName) with automatic cloud fallback."
+                }
+
                 val streamFlow = if (useLocalLiteRt) {
                     val localSystemInstruction = buildString {
                         appendLine(systemPrompt)
@@ -781,7 +790,7 @@ class MoteViewModel(
                         attachedBitmap = attachedBitmap,
                         clockContext = clockContext,
                         enabledToolIds = enabledToolIds,
-                        inferenceMode = selectedHybridMode,
+                        inferenceMode = effectiveHybridMode,
                         enableNativeFunctionCalling = currentPrefs.nativeFunctionCallingEnabled
                     )
                 }
@@ -799,7 +808,7 @@ class MoteViewModel(
                                 partialText = event.accumulatedText,
                                 botName = botName,
                                 elapsedMs = event.elapsedMs,
-                                pendingToolHint = event.pendingToolHint ?: if (preRoute.switchedAutomatically) preRoute.engineReason else null,
+                                pendingToolHint = event.pendingToolHint ?: if (healthDecision.switchedAutomatically) healthDecision.engineReason else null,
                                 liveParts = emptyList()
                             )
                         }

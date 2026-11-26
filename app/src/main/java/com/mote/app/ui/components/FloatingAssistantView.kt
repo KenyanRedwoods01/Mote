@@ -1603,16 +1603,21 @@ fun FloatingAssistantOrb(
         label = "orbIdleAlpha"
     )
 
-    val pulseTransition = rememberInfiniteTransition(label = "orbPulse")
-    val pulseRadius by pulseTransition.animateFloat(
-        initialValue = 0.85f,
-        targetValue = 1.18f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isBusy) 650 else 1800),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "orbPulseRadius"
-    )
+    val pulseRadius = if (isBusy || isDragging) {
+        val pulseTransition = rememberInfiniteTransition(label = "orbPulse")
+        val animated by pulseTransition.animateFloat(
+            initialValue = 0.88f,
+            targetValue = 1.18f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = if (isBusy) 650 else 1200),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "orbPulseRadius"
+        )
+        animated
+    } else {
+        0.96f
+    }
 
     Box(
         modifier = modifier

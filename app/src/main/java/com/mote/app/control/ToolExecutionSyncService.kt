@@ -111,7 +111,7 @@ class ToolExecutionSyncService(
             GenUiToolRegistry.TOOL_STOPWATCH -> verifyStopwatchSync(result, op, before, startCheck)
             GenUiToolRegistry.TOOL_COUNTDOWN_TIMER -> verifyTimerSync(result, op, before, startCheck)
             GenUiToolRegistry.TOOL_VOICE_CALL -> verifyPhoneAndVoiceSync(result, op, before, startCheck)
-            GenUiToolRegistry.TOOL_CALENDAR -> verifyCalendarSync(result, op, startCheck)
+            GenUiToolRegistry.TOOL_CALENDAR -> verifyCalendarSync(result, op, before, startCheck)
             GenUiToolRegistry.TOOL_NOTES -> verifyNotesSync(result, op, before, startCheck)
             GenUiToolRegistry.TOOL_SCREEN_CAPTURE -> verifyScreenCaptureSync(result, op, startCheck)
             GenUiToolRegistry.TOOL_CLIPBOARD -> verifyClipboardSync(result, startCheck)
@@ -442,27 +442,51 @@ class ToolExecutionSyncService(
     private suspend fun verifyCalendarSync(
         result: GenUiToolResult,
         op: String,
+        before: PreExecutionSnapshot,
         startCheck: Long
     ): BackgroundVerificationResult {
         val events = dao.getAllCalendarEventsOnce()
         val panel = result.uiPart as? InChatUiPart.CalendarEventsPanel
-        val targetId = panel?.highlightEventId
-        val ok = when {
-            op.contains("delete") -> true
-            !targetId.isNullOrBlank() -> events.any { it.id == targetId }
-            else -> true
-        }
+        val targetId = panel?.highlightEventId ?: result.createdRecordId
         val found = targetId?.let { id -> events.firstOrNull { it.id == id } }
-        val syncNote = if (found?.syncedToSystemCalendar == true) " + Android CalendarContract" else ""
+
+        val (ok, detail) = when {
+            op.contains("delete") || op.contains("remove") || op.contains("cancel") -> {
+                val removed = (events.size < before.calendarCount) ||
+                    (!targetId.isNullOrBlank() && events.none { it.id == targetId })
+                removed to if (removed) {
+                    "Confirmed event deleted from Room DB (${before.calendarCount} -> ${events.size})"
+                } else {
+                    "Calendar deletion unverified: event count unchanged (${events.size})"
+                }
+            }
+            op.contains("add") || op.contains("create") || op.contains("schedule") -> {
+                val created = found != null && events.size >= before.calendarCount
+                val syncNote = if (found?.syncedToSystemCalendar == true) " + Android CalendarContract" else " (Room local)"
+                created to if (created && found != null) {
+                    "Verified '${found.title}' persisted in Room DB$syncNote (${events.size} total)"
+                } else {
+                    "Calendar event creation unverified: record not found in Room DB after write"
+                }
+            }
+            op.contains("update") || op.contains("edit") || op.contains("reschedule") || op.contains("move") -> {
+                val exists = found != null
+                val syncNote = if (found?.syncedToSystemCalendar == true) " + Android CalendarContract" else ""
+                exists to if (exists && found != null) {
+                    "Verified updated event '${found.title}' in Room DB$syncNote"
+                } else {
+                    "Calendar event update unverified: target event missing in Room DB"
+                }
+            }
+            else -> {
+                true to "Verified Calendar DB state (${events.size} event${if (events.size == 1) "" else "s"})"
+            }
+        }
         return recordAndReturn(
             result = result,
             verified = ok,
             source = "CalendarContract + Room",
-            detail = if (found != null) {
-                "Verified '${found.title}' in Room DB$syncNote"
-            } else {
-                "Verified Calendar DB (${events.size} event${if (events.size == 1) "" else "s"})"
-            },
+            detail = detail,
             startCheck = startCheck
         )
     }

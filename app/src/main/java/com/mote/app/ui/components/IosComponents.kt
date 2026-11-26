@@ -176,24 +176,32 @@ fun IosTopNavBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(tokens.canvas.copy(alpha = 0.96f))
-            .padding(horizontal = 18.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 10.dp)
+        ) {
             Text(
                 text = title,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
                 color = tokens.onSurface,
-                letterSpacing = (-0.3).sp
+                letterSpacing = (-0.3).sp,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
             )
             if (!subtitle.isNullOrBlank()) {
                 Text(
                     text = subtitle,
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.Medium,
-                    color = tokens.onSurfaceSecondary
+                    color = tokens.onSurfaceSecondary,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
             }
         }

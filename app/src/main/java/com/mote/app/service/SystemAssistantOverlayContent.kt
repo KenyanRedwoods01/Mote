@@ -350,28 +350,38 @@ private fun LottieSystemVoiceOrb(
     val secondaryColor = Color(orbTheme.secondaryHex)
     val accentColor = Color(orbTheme.accentHex)
 
-    val infinite = rememberInfiniteTransition(label = "siriOverlayOrb")
-    val spinAngle by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isExecuting || isDragging) 1400 else 3600, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "siriSpin"
-    )
-    val wavePhase by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = (2f * PI).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1350, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "siriWave"
-    )
+    val shouldAnimate = isActive || isExecuting || isDragging
+    val spinAngle: Float
+    val wavePhase: Float
+    if (shouldAnimate) {
+        val infinite = rememberInfiniteTransition(label = "siriOverlayOrb")
+        val animatedSpin by infinite.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = if (isExecuting || isDragging) 1400 else 2800, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "siriSpin"
+        )
+        val animatedWave by infinite.animateFloat(
+            initialValue = 0f,
+            targetValue = (2f * PI).toFloat(),
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1350, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "siriWave"
+        )
+        spinAngle = animatedSpin
+        wavePhase = animatedWave
+    } else {
+        spinAngle = 0f
+        wavePhase = 0f
+    }
     val smoothRms by animateFloatAsState(
-        targetValue = if (isDragging) 0.85f else rmsLevel.coerceIn(0.10f, 1f),
-        animationSpec = tween(110),
+        targetValue = if (isDragging) 0.85f else if (shouldAnimate) rmsLevel.coerceIn(0.10f, 1f) else 0.14f,
+        animationSpec = tween(140),
         label = "siriRms"
     )
     val dragScale by animateFloatAsState(
@@ -383,14 +393,14 @@ private fun LottieSystemVoiceOrb(
     val lottieComposition by rememberLottieComposition(
         LottieCompositionSpec.RawRes(R.raw.voice_waveform_lottie)
     )
-    val lottieSpeed = if (isActive || isExecuting || isDragging) {
+    val lottieSpeed = if (shouldAnimate) {
         (0.85f + smoothRms * 2.2f).coerceIn(0.85f, 3.0f)
     } else {
-        0.55f
+        0f
     }
     val lottieProgress by animateLottieCompositionAsState(
         composition = lottieComposition,
-        isPlaying = true,
+        isPlaying = shouldAnimate,
         iterations = LottieConstants.IterateForever,
         speed = lottieSpeed
     )

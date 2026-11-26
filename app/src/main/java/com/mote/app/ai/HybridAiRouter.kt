@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.os.SystemClock
 import android.util.Log
 import com.google.firebase.Firebase
+import com.google.firebase.ai.GenerativeModel
 import com.google.firebase.ai.InferenceMode
 import com.google.firebase.ai.InferenceSource
 import com.google.firebase.ai.OnDeviceConfig
@@ -12,6 +13,7 @@ import com.google.firebase.ai.type.Content
 import com.google.firebase.ai.type.GenerativeBackend
 import com.google.firebase.ai.type.PublicPreviewAPI
 import com.google.firebase.ai.type.Schema
+import com.google.firebase.ai.type.Tool
 import com.google.firebase.ai.type.content
 import com.google.firebase.ai.type.generationConfig
 import com.mote.app.model.ChatMessage
@@ -84,6 +86,49 @@ class HybridAiRouter {
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
+    }
+
+    private val aiClient by lazy {
+        Firebase.ai(backend = GenerativeBackend.googleAI())
+    }
+
+    private val modelCacheLock = Any()
+    private val modelCache = object : LinkedHashMap<String, GenerativeModel>(12, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, GenerativeModel>?): Boolean {
+            return size > 10
+        }
+    }
+
+    @OptIn(PublicPreviewAPI::class)
+    private fun getOrCreateGenerativeModel(
+        cacheKey: String,
+        modelName: String,
+        genConfig: com.google.firebase.ai.type.GenerationConfig,
+        systemInstruction: Content? = null,
+        tools: List<Tool>? = null,
+        onDeviceConfig: OnDeviceConfig? = null
+    ): GenerativeModel {
+        synchronized(modelCacheLock) {
+            modelCache[cacheKey]?.let { return it }
+            val created = if (onDeviceConfig != null) {
+                aiClient.generativeModel(
+                    modelName = modelName,
+                    generationConfig = genConfig,
+                    systemInstruction = systemInstruction,
+                    tools = tools,
+                    onDeviceConfig = onDeviceConfig
+                )
+            } else {
+                aiClient.generativeModel(
+                    modelName = modelName,
+                    generationConfig = genConfig,
+                    systemInstruction = systemInstruction,
+                    tools = tools
+                )
+            }
+            modelCache[cacheKey] = created
+            return created
+        }
     }
 
     @OptIn(PublicPreviewAPI::class)
@@ -395,23 +440,17 @@ class HybridAiRouter {
                     maxOutputTokens = config.maxOutputTokens.coerceIn(128, 4096)
                 }
 
-                val aiClient = Firebase.ai(backend = GenerativeBackend.googleAI())
-                val model = if (onDeviceCfg != null) {
-                    aiClient.generativeModel(
-                        modelName = candidateModelId,
-                        generationConfig = genConfig,
-                        systemInstruction = systemInstructionContent,
-                        tools = toolsList.ifEmpty { null },
-                        onDeviceConfig = onDeviceCfg
-                    )
-                } else {
-                    aiClient.generativeModel(
-                        modelName = candidateModelId,
-                        generationConfig = genConfig,
-                        systemInstruction = systemInstructionContent,
-                        tools = toolsList.ifEmpty { null }
-                    )
-                }
+                val sysHash = (botSystemPrompt.hashCode() * 31) + clockContext.hashCode() + enabledToolIds.hashCode()
+                val cacheKey = "chat|$candidateModelId|${onDeviceCfg?.let { inferenceMode.name } ?: "CLOUD"}|" +
+                    "${toolsList.size}|${config.temperature}|${config.topP}|${config.maxOutputTokens}|$sysHash"
+                val model = getOrCreateGenerativeModel(
+                    cacheKey = cacheKey,
+                    modelName = candidateModelId,
+                    genConfig = genConfig,
+                    systemInstruction = systemInstructionContent,
+                    tools = toolsList.ifEmpty { null },
+                    onDeviceConfig = onDeviceCfg
+                )
 
                 try {
                     withTimeout(INFERENCE_TIMEOUT_MS) {
@@ -573,24 +612,18 @@ class HybridAiRouter {
             }
 
             for ((subIdx, onDeviceCfg) in useOnDeviceConfigs.withIndex()) {
-                val aiClient = Firebase.ai(backend = GenerativeBackend.googleAI())
                 val genCfg = generationConfig {
                     responseMimeType = "application/json"
                     responseSchema = cardSchema
                     temperature = 0.25f
                 }
-                val genUiModel = if (onDeviceCfg != null) {
-                    aiClient.generativeModel(
-                        modelName = candidateModelId,
-                        generationConfig = genCfg,
-                        onDeviceConfig = onDeviceCfg
-                    )
-                } else {
-                    aiClient.generativeModel(
-                        modelName = candidateModelId,
-                        generationConfig = genCfg
-                    )
-                }
+                val genUiCacheKey = "genui|$candidateModelId|${onDeviceCfg?.let { effectiveMode.name } ?: "CLOUD"}"
+                val genUiModel = getOrCreateGenerativeModel(
+                    cacheKey = genUiCacheKey,
+                    modelName = candidateModelId,
+                    genConfig = genCfg,
+                    onDeviceConfig = onDeviceCfg
+                )
 
                 try {
                     StreamParserTelemetry.recordStreamStart("$candidateModelId (GenUI)")

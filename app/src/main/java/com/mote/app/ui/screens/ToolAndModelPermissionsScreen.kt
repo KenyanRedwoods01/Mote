@@ -120,7 +120,7 @@ fun ToolAndModelPermissionsScreen(
                 .weight(1f)
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(bottom = 112.dp)
+            contentPadding = PaddingValues(top = 4.dp, bottom = 138.dp)
         ) {
             // 1. Explicit User Authorization Policy Banner
             item(key = "explicit_auth_policy_banner") {
