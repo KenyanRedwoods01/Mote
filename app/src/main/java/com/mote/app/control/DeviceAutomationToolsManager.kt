@@ -84,9 +84,13 @@ class DeviceAutomationToolsManager(context: Context) {
 
     private val appContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
+    val appLauncherUtility = AppLauncherUtility(appContext)
 
     @Volatile
     private var torchEnabledState: Boolean = false
+
+    @Volatile
+    private var lastSavedCaptureUri: String? = null
 
     private val _capturedScreenshots = MutableStateFlow<Map<String, Bitmap>>(emptyMap())
     val capturedScreenshots: StateFlow<Map<String, Bitmap>> = _capturedScreenshots.asStateFlow()
@@ -254,6 +258,9 @@ class DeviceAutomationToolsManager(context: Context) {
 
         val captureId = "cap_${UUID.randomUUID().toString().take(8)}"
         val savedUri = saveBitmapToMediaStore(capturedBitmap, label)
+        if (savedUri != null) {
+            lastSavedCaptureUri = savedUri.toString()
+        }
         val previewBmp = createScaledPreview(capturedBitmap, maxDim = 1080)
         if (previewBmp !== capturedBitmap) {
             capturedBitmap.recycle()
@@ -678,6 +685,21 @@ class DeviceAutomationToolsManager(context: Context) {
         )
     }
 
+    fun shareContent(
+        targetAppQuery: String?,
+        mediaUriString: String?,
+        textMessage: String?
+    ): DeviceToolOutcome {
+        val resolvedUri = mediaUriString
+            ?.takeIf { it.isNotBlank() && !it.startsWith("$") }
+            ?: lastSavedCaptureUri
+        return appLauncherUtility.shareToTargetApp(
+            targetAppQuery = targetAppQuery,
+            mediaUriString = resolvedUri,
+            textMessage = textMessage
+        )
+    }
+
     private fun launchPackageDirectly(
         packageName: String,
         label: String,
@@ -1009,11 +1031,10 @@ class DeviceAutomationToolsManager(context: Context) {
     fun buildDeviceContextForAi(): String {
         val accessibilityActive = MoteAccessibilityService.instance != null
         val usageStatsGranted = hasUsageStatsPermission()
-        val recentApps = if (usageStatsGranted) {
-            queryRecentUsageApps(hoursBack = 24).take(5).joinToString(", ") { it.label }
-        } else {
-            ""
-        }
+        val recentUsage = if (usageStatsGranted) queryRecentUsageApps(hoursBack = 24) else emptyList()
+        val recentApps = recentUsage.take(5).joinToString(", ") { it.label }
+        val recentPkgs = recentUsage.map { it.packageName }.toSet()
+        val manifestSummary = appLauncherUtility.buildCompactManifestForAi(recentPkgs, maxApps = 24)
         val mpReady = MediaProjectionConsentBridge.hasCachedConsent()
         val fgPkg = MoteAccessibilityService.currentPackageName ?: appContext.packageName
         return buildString {
@@ -1021,6 +1042,7 @@ class DeviceAutomationToolsManager(context: Context) {
             appendLine("- Flashlight: ${if (torchEnabledState) "ON" else "OFF"}")
             appendLine("- MediaProjection Screen Capture: ${if (mpReady) "PRE-AUTHORIZED (ready)" else "PROMPT ON DEMAND (Android explicit consent dialog will appear when takeScreenshot or captureAndAnalyzeScreen is called)"}")
             appendLine("- App UsageStats Access: ${if (usageStatsGranted) "GRANTED${if (recentApps.isNotBlank()) " · Recent apps: $recentApps" else ""}" else "NOT GRANTED (common & installed apps can still be opened directly via openApp)"}")
+            appendLine("- $manifestSummary")
             appendLine("- Accessibility Service: ${if (accessibilityActive) "ACTIVE" else "INACTIVE"}")
             appendLine("- Foreground Package: $fgPkg")
         }.trim()

@@ -27,6 +27,8 @@ import com.mote.app.ai.EngineUsed
 import com.mote.app.ai.HybridGenUiResult
 import com.mote.app.ai.InChatUiPart
 import com.mote.app.ai.MoteAction
+import com.mote.app.ai.ToolChainExecutionSnapshot
+import com.mote.app.ai.ToolStepStatus
 import com.mote.app.control.ClockToolsManager
 import com.mote.app.control.CountdownTimerItem
 import com.mote.app.control.StopwatchUiState
@@ -130,6 +132,9 @@ fun InChatUiPartRenderer(
                 previewBitmap = part.captureId?.let { capturedScreenshots[it] },
                 onAnalyzeScreenshot = onAnalyzeScreenshot
             )
+        }
+        is InChatUiPart.ToolChainStatusPanel -> {
+            InChatToolChainStatusWidget(snapshot = part.snapshot)
         }
     }
 }
@@ -1024,6 +1029,248 @@ private fun InChatScreenCaptureWidget(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InChatToolChainStatusWidget(snapshot: ToolChainExecutionSnapshot) {
+    val tokens = LocalMoteColors.current
+    val borderColor = when {
+        !snapshot.isComplete -> CloudFlashCobalt.copy(alpha = 0.5f)
+        snapshot.allVerified -> LocalNanoEmerald.copy(alpha = 0.55f)
+        snapshot.verifiedCount > 0 -> Color(0xFFD97706).copy(alpha = 0.5f)
+        else -> Color(0xFFDC2626).copy(alpha = 0.45f)
+    }
+    val headerBadgeText = when {
+        !snapshot.isComplete -> "EXECUTING CHAIN..."
+        snapshot.allVerified -> "EXECUTION VERIFIED"
+        snapshot.verifiedCount > 0 -> "PARTIAL (${snapshot.verifiedCount}/${snapshot.steps.size})"
+        else -> "UNVERIFIED"
+    }
+    val headerBadgeBg = when {
+        !snapshot.isComplete -> tokens.accentBlueBg
+        snapshot.allVerified -> if (tokens.isDark) Color(0xFF064E3B) else Color(0xFFDCFCE7)
+        snapshot.verifiedCount > 0 -> if (tokens.isDark) Color(0xFF451A03) else Color(0xFFFEF3C7)
+        else -> if (tokens.isDark) Color(0xFF450A0A) else Color(0xFFFEE2E2)
+    }
+    val headerBadgeFg = when {
+        !snapshot.isComplete -> tokens.accentBlue
+        snapshot.allVerified -> if (tokens.isDark) Color(0xFF6EE7B7) else Color(0xFF15803D)
+        snapshot.verifiedCount > 0 -> if (tokens.isDark) Color(0xFFFCD34D) else Color(0xFFB45309)
+        else -> if (tokens.isDark) Color(0xFFFCA5A5) else Color(0xFFB91C1C)
+    }
+
+    MoteCard(
+        background = tokens.surface,
+        modifier = Modifier
+            .border(width = 1.dp, color = borderColor, shape = RoundedCornerShape(16.dp))
+            .testTag("inchat_tool_chain_status_widget")
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(headerBadgeBg),
+                contentAlignment = Alignment.Center
+            ) {
+                if (!snapshot.isComplete) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = headerBadgeFg
+                    )
+                } else {
+                    Icon(
+                        imageVector = if (snapshot.allVerified) Icons.Outlined.VerifiedUser else Icons.Outlined.ErrorOutline,
+                        contentDescription = headerBadgeText,
+                        tint = headerBadgeFg,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = snapshot.chainTitle,
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MoteNavy,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(headerBadgeBg)
+                            .padding(horizontal = 7.dp, vertical = 2.dp)
+                            .testTag("tool_chain_verification_badge")
+                    ) {
+                        Text(
+                            text = headerBadgeText,
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = headerBadgeFg
+                        )
+                    }
+                }
+                val totalSteps = snapshot.steps.size.coerceAtLeast(1)
+                val completedSteps = snapshot.steps.count {
+                    it.status == ToolStepStatus.EXECUTION_VERIFIED ||
+                        it.status == ToolStepStatus.FAILED ||
+                        it.status == ToolStepStatus.BLOCKED
+                }
+                Text(
+                    text = if (snapshot.isComplete) {
+                        "${snapshot.verifiedCount}/$totalSteps Android API operation(s) verified with execution receipt"
+                    } else {
+                        "Running sequential step ${(completedSteps + 1).coerceAtMost(totalSteps)} of $totalSteps..."
+                    },
+                    fontSize = 11.sp,
+                    color = SlateMuted
+                )
+            }
+        }
+
+        if (!snapshot.isComplete && snapshot.steps.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            val fraction = (snapshot.steps.count { it.status == ToolStepStatus.EXECUTION_VERIFIED }.toFloat() /
+                snapshot.steps.size.toFloat()).coerceIn(0.12f, 0.95f)
+            LinearProgressIndicator(
+                progress = { fraction },
+                color = CloudFlashCobalt,
+                trackColor = tokens.divider,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .clip(CircleShape)
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            snapshot.steps.forEach { step ->
+                val (stepColor, stepIcon) = when (step.status) {
+                    ToolStepStatus.EXECUTION_VERIFIED -> LocalNanoEmerald to Icons.Outlined.CheckCircle
+                    ToolStepStatus.RUNNING -> CloudFlashCobalt to Icons.Outlined.Sync
+                    ToolStepStatus.QUEUED -> SlateMuted to Icons.Outlined.Schedule
+                    ToolStepStatus.BLOCKED -> Color(0xFFD97706) to Icons.Outlined.Block
+                    ToolStepStatus.FAILED -> Color(0xFFDC2626) to Icons.Outlined.Cancel
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(MoteSurfaceSubtle)
+                        .border(0.75.dp, stepColor.copy(alpha = 0.35f), RoundedCornerShape(11.dp))
+                        .padding(9.dp)
+                        .testTag("tool_chain_step_${step.stepIndex}")
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp)
+                    ) {
+                        if (step.status == ToolStepStatus.RUNNING) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = stepColor
+                            )
+                        } else {
+                            Icon(
+                                imageVector = stepIcon,
+                                contentDescription = step.status.label,
+                                tint = stepColor,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                        Text(
+                            text = "Step ${step.stepIndex} · ${step.operationLabel}",
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MoteNavy,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = step.status.label,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = stepColor
+                        )
+                    }
+
+                    Spacer(Modifier.height(3.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = step.engineLabel,
+                            fontSize = 10.sp,
+                            color = SlateMuted
+                        )
+                        val receiptMeta = buildString {
+                            step.receiptId?.let { append(it) }
+                            if (step.latencyMs > 0L) {
+                                if (isNotEmpty()) append(" · ")
+                                append("${step.latencyMs}ms")
+                            }
+                        }
+                        if (receiptMeta.isNotBlank()) {
+                            Text(
+                                text = receiptMeta,
+                                fontSize = 9.5.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (step.receiptId != null) LocalNanoEmerald else SlateMuted
+                            )
+                        }
+                    }
+
+                    if (!step.usedIntermediateState.isNullOrBlank()) {
+                        Spacer(Modifier.height(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(tokens.accentBlueBg)
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "↪ ${step.usedIntermediateState}",
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = tokens.accentBlue
+                            )
+                        }
+                    }
+
+                    if (step.summary.isNotBlank()) {
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = step.summary,
+                            fontSize = 10.5.sp,
+                            color = SlateMuted,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            lineHeight = 14.sp
+                        )
+                    }
                 }
             }
         }

@@ -1,12 +1,15 @@
 package com.mote.app.ui.screens
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -45,6 +48,7 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Event
 import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -136,6 +140,11 @@ private val starterPrompts = listOf(
         prompt = "Take a screenshot using MediaProjection and visually analyze what is on my screen"
     ),
     StarterPrompt(
+        title = "Screenshot & Share",
+        subtitle = "Multi-step chain: MediaProjection capture -> WhatsApp share",
+        prompt = "Take a screenshot and share it on WhatsApp"
+    ),
+    StarterPrompt(
         title = "Open YouTube / Chrome",
         subtitle = "App Navigation Tool via UsageStats & Android Intents",
         prompt = "Open YouTube for me"
@@ -198,6 +207,58 @@ fun ChatHubScreen(
     var genUiMode by remember { mutableStateOf(false) }
     var attachedBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var showModelSwitcher by remember { mutableStateOf(false) }
+    var showVoiceOverlay by remember { mutableStateOf(false) }
+    var speechState by remember { mutableStateOf(SpeechRecognitionState()) }
+
+    val speechController = remember(context) {
+        GoogleSpeechInputController(
+            context = context,
+            onPartialText = { /* streamed directly inside speechState.partialText */ },
+            onFinalText = { finalText ->
+                showVoiceOverlay = false
+                if (finalText.isNotBlank()) {
+                    viewModel.sendStreamingChatMessage(
+                        prompt = finalText,
+                        bot = selectedBot
+                    )
+                }
+            },
+            onStateChanged = { next ->
+                speechState = next
+            }
+        )
+    }
+
+    DisposableEffect(speechController) {
+        onDispose { speechController.release() }
+    }
+
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            showVoiceOverlay = true
+            speechController.startListening()
+        } else {
+            speechState = SpeechRecognitionState(errorText = "Microphone permission is required for voice commands.")
+            Toast.makeText(context, "Microphone permission is needed for voice commands", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun launchVoiceAssistant() {
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            showVoiceOverlay = true
+            if (!speechState.isListening) {
+                speechController.startListening()
+            }
+        } else {
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -252,6 +313,7 @@ fun ChatHubScreen(
     }
 
     val tokens = LocalMoteColors.current
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -808,6 +870,27 @@ fun ChatHubScreen(
                     )
                 }
 
+                // Siri/Alexa Animated Voice Command Overlay trigger
+                IconButton(
+                    onClick = { launchVoiceAssistant() },
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(Color(0xFF0EA5E9), Color(0xFF6366F1))
+                            )
+                        )
+                        .testTag("chat_voice_overlay_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.GraphicEq,
+                        contentDescription = "Launch animated voice command overlay",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
                 if (isStreaming) {
                     FilledIconButton(
                         onClick = { viewModel.stopStreaming() },
@@ -849,6 +932,33 @@ fun ChatHubScreen(
                 }
             }
         }
+    }
+
+    VoiceAssistantOverlay(
+        visible = showVoiceOverlay,
+        speechState = speechState,
+        activeBotName = selectedBot?.name ?: "Mote",
+        activeRouteLabel = activeHeaderModelName,
+        onToggleListening = {
+            if (speechState.isListening) {
+                speechController.stopListening()
+            } else {
+                launchVoiceAssistant()
+            }
+        },
+        onQuickVoiceCommand = { cmd ->
+            speechController.stopListening()
+            showVoiceOverlay = false
+            viewModel.sendStreamingChatMessage(
+                prompt = cmd,
+                bot = selectedBot
+            )
+        },
+        onDismiss = {
+            speechController.stopListening()
+            showVoiceOverlay = false
+        }
+    )
     }
 
     if (showModelSwitcher) {

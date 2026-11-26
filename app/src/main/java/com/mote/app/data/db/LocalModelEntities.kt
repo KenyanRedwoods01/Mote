@@ -68,6 +68,7 @@ data class ModelStudioPrefsEntity(
     val requireBatteryNotLow: Boolean = true,
     val autoLoadLastModel: Boolean = true,
     val ecoInferenceEnabled: Boolean = true,
+    val adaptiveThermalBatteryRouting: Boolean = true,
     val autoCheckModelUpdates: Boolean = true,
     val lastModelUpdateCheckEpochMs: Long? = null,
     val lastModelUpdateSummary: String? = null,

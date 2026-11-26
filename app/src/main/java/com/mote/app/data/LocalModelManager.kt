@@ -21,11 +21,13 @@ import com.mote.app.ai.LiteRtDiagnosticLogger
 import com.mote.app.ai.LiteRtDiagnosticSummary
 import com.mote.app.ai.LocalHardwareBackend
 import com.mote.app.ai.OnDeviceLiteRtEngine
+import com.mote.app.ai.SequentialToolOrchestrator
 import com.mote.app.control.BatteryResourceMonitor
 import com.mote.app.control.BatteryTelemetrySnapshot
 import com.mote.app.control.CalendarToolsManager
 import com.mote.app.control.ClockToolsManager
 import com.mote.app.control.DeviceAutomationToolsManager
+import com.mote.app.control.SystemHealthManager
 import com.mote.app.control.ToolPermissionInspector
 import com.mote.app.control.ToolPermissionsSnapshot
 import com.mote.app.data.db.LocalModelDatabase
@@ -202,6 +204,7 @@ class LocalModelManager(context: Context) {
     val diagnosticLogs: StateFlow<List<LiteRtDiagnosticLogEntry>> = diagnosticLogger.logs
     val diagnosticSummary: StateFlow<LiteRtDiagnosticSummary> = diagnosticLogger.summary
     private val batteryMonitor = BatteryResourceMonitor(appContext)
+    val systemHealth = SystemHealthManager(appContext)
     val clockTools = ClockToolsManager(appContext)
     val calendarTools = CalendarToolsManager(appContext)
     val deviceTools = DeviceAutomationToolsManager(appContext)
@@ -268,6 +271,8 @@ class LocalModelManager(context: Context) {
             }
         }
     )
+
+    val toolOrchestrator = SequentialToolOrchestrator(toolRegistry)
 
     private val _toolPermissions = MutableStateFlow(ToolPermissionInspector.inspect(appContext))
     val toolPermissions: StateFlow<ToolPermissionsSnapshot> = _toolPermissions.asStateFlow()
@@ -885,6 +890,13 @@ class LocalModelManager(context: Context) {
 
     fun refreshBatteryTelemetry() {
         batteryMonitor.refreshNow()
+        systemHealth.refreshNow()
+    }
+
+    fun setAdaptiveThermalBatteryRouting(enabled: Boolean) {
+        scope.launch {
+            updatePrefs { it.copy(adaptiveThermalBatteryRouting = enabled) }
+        }
     }
 
     fun refreshToolPermissions() {
@@ -895,6 +907,7 @@ class LocalModelManager(context: Context) {
         liteRtEngine.shutdown()
         _loadedModel.value = null
         batteryMonitor.stop()
+        systemHealth.shutdown()
         clockTools.stopAllTickers()
     }
 

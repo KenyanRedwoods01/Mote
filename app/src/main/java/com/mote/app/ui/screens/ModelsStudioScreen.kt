@@ -74,6 +74,8 @@ fun ModelsStudioScreen(
     val liteRtLogs by viewModel.liteRtDiagnosticLogs.collectAsStateWithLifecycle()
     val liteRtSummary by viewModel.liteRtDiagnosticSummary.collectAsStateWithLifecycle()
     val parserTelemetry by viewModel.streamParserTelemetry.collectAsStateWithLifecycle()
+    val systemHealth by viewModel.systemHealth.collectAsStateWithLifecycle()
+    val lastAdaptiveRouteNote by viewModel.lastAdaptiveRouteNote.collectAsStateWithLifecycle()
 
     var selectedStudioTab by remember { mutableIntStateOf(0) } // 0 = Models, 1 = Debug
     var showCreateSheet by remember { mutableStateOf(false) }
@@ -320,6 +322,17 @@ fun ModelsStudioScreen(
                     onToggleOfflineChat = { viewModel.setPreferLoadedLocalChat(it) },
                     onBenchmark = { viewModel.benchmarkLoadedLocalModel() },
                     onUnload = { viewModel.unloadLocalModel() }
+                )
+            }
+
+            // 1b. SystemHealthManager Battery/Thermal Adaptive Inference Toggle (Local vs Cloud)
+            item(key = "system_health_adaptive_card") {
+                SystemHealthAdaptiveCard(
+                    health = systemHealth,
+                    adaptiveEnabled = studioPrefs.adaptiveThermalBatteryRouting,
+                    lastRouteNote = lastAdaptiveRouteNote,
+                    onToggleAdaptive = { viewModel.setAdaptiveThermalBatteryRouting(it) },
+                    onRefresh = { viewModel.refreshSystemHealth() }
                 )
             }
 

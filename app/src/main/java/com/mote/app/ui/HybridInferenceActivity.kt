@@ -39,8 +39,11 @@ import com.mote.app.ai.HybridAiRouter
 import com.mote.app.ai.HybridGenUiResult
 import com.mote.app.ai.InChatUiPart
 import com.mote.app.ai.LlmConfig
+import com.mote.app.ai.ToolChainExecutionSnapshot
+import com.mote.app.ai.ToolStepStatus
 import com.mote.app.control.DeviceActionExecutor
 import com.mote.app.control.DeviceAutomationToolsManager
+import com.mote.app.data.LocalModelDownloadStatus
 import com.mote.app.data.LocalModelManager
 import com.mote.app.security.configureAppCheck
 import com.mote.app.service.MediaProjectionConsentBridge
@@ -180,38 +183,29 @@ class HybridInferenceActivity : ComponentActivity() {
                                 append(ChatGenUiToolProtocol.buildToolSystemInstructions(liveContext, enabledToolIds))
                             }
 
-                            var processedBlockCount = 0
-                            val executedParts = liveParts.toMutableList()
-
-                            suspend fun processNewBlocks(blocks: List<String>) {
-                                if (blocks.size <= processedBlockCount) return
-                                for (idx in processedBlockCount until blocks.size) {
-                                    val inv = ChatGenUiToolProtocol.decodeToolInvocation(blocks[idx])
-                                    if (inv != null) {
-                                        val toolResult = localModelManager.toolRegistry.dispatch(inv)
-                                        toolResult?.uiPart?.let { part ->
-                                            executedParts.add(part)
-                                            liveParts = executedParts.toList()
-                                        }
-                                    }
+                            // Adaptive Battery/Thermal Route Resolution via SystemHealthManager
+                            var activeLocal = localModelManager.loadedModel.value
+                            val savedId = currentPrefs.activeLocalModelId
+                            val hasSavedDownloaded = !savedId.isNullOrBlank() &&
+                                localModelManager.models.value.any {
+                                    it.id == savedId && it.status == LocalModelDownloadStatus.DOWNLOADED
                                 }
-                                processedBlockCount = blocks.size
+
+                            val routeDecision = localModelManager.systemHealth.resolveInferenceRoute(
+                                adaptiveEnabled = currentPrefs.adaptiveThermalBatteryRouting,
+                                userPrefersLocal = currentPrefs.preferLocalOfflineChat,
+                                hasLocalModelReady = (activeLocal?.supportsOnDeviceInference == true) || hasSavedDownloaded,
+                                hasAttachedImage = attachedBitmap != null
+                            )
+
+                            var useLocal = routeDecision.useLocalEngine
+                            if (useLocal && activeLocal == null && !savedId.isNullOrBlank()) {
+                                pendingToolHint = "Adaptive Health: Loading on-device LiteRT-LM model..."
+                                activeLocal = localModelManager.loadModel(savedId).getOrNull()
+                                useLocal = activeLocal?.supportsOnDeviceInference == true
                             }
 
-                            if (attachedBitmap == null && currentPrefs.preferLocalOfflineChat && localModelManager.loadedModel.value == null) {
-                                val savedId = currentPrefs.activeLocalModelId
-                                if (savedId != null) {
-                                    pendingToolHint = "Loading on-device LiteRT-LM model..."
-                                    localModelManager.loadModel(savedId)
-                                }
-                            }
-
-                            val activeLocal = if (attachedBitmap == null && currentPrefs.preferLocalOfflineChat) {
-                                localModelManager.loadedModel.value
-                            } else {
-                                null
-                            }
-                            val streamFlow = if (activeLocal != null && activeLocal.supportsOnDeviceInference) {
+                            val streamFlow = if (useLocal && activeLocal != null && activeLocal.supportsOnDeviceInference) {
                                 localModelManager.streamLoadedLocalModel(
                                     prompt = trimmed,
                                     systemPrompt = fullSystemPrompt,
@@ -230,23 +224,82 @@ class HybridInferenceActivity : ComponentActivity() {
                                 )
                             }
 
+                            var finalRawText = ""
+                            val completedBlocks = mutableListOf<String>()
+                            val existingParts = liveParts.toList()
+
                             streamFlow.collect { event ->
                                 when (event) {
                                     is ChatStreamEvent.Delta -> {
                                         streamedText = event.accumulatedText
                                         pendingToolHint = event.pendingToolHint
-                                        processNewBlocks(event.completedToolJsonBlocks)
+                                            ?: if (routeDecision.switchedAutomatically) routeDecision.engineReason else null
                                     }
                                     is ChatStreamEvent.Completed -> {
-                                        processNewBlocks(event.completedToolJsonBlocks)
-                                        streamedText = event.fullText.ifBlank {
-                                            if (executedParts.isNotEmpty()) "Done — action confirmed below." else ""
-                                        }
-                                        pendingToolHint = null
-                                        isStreaming = false
+                                        finalRawText = event.fullText
+                                        completedBlocks.clear()
+                                        completedBlocks.addAll(event.completedToolJsonBlocks)
                                     }
                                 }
                             }
+
+                            // Sequential Tool Chain Execution + Proof-of-Execution Verification
+                            val decodedInvocations = completedBlocks.mapNotNull {
+                                ChatGenUiToolProtocol.decodeToolInvocation(it)
+                            }
+                            val plannedInvocations = if (decodedInvocations.isEmpty() && attachedBitmap == null) {
+                                localModelManager.toolOrchestrator.planFallbackChainIfUnverified(
+                                    userPrompt = trimmed,
+                                    enabledToolIds = enabledToolIds
+                                )
+                            } else {
+                                decodedInvocations
+                            }
+
+                            var chainSnapshot: ToolChainExecutionSnapshot? = null
+                            val newParts = mutableListOf<InChatUiPart>()
+
+                            if (plannedInvocations.isNotEmpty()) {
+                                val runResult = localModelManager.toolOrchestrator.executeChain(
+                                    rawInvocations = plannedInvocations,
+                                    chainTitle = if (plannedInvocations.size > 1) "Sequential Tool Chain" else "Overlay Action Verification",
+                                    onProgress = { progressSnap ->
+                                        val activeStep = progressSnap.steps.firstOrNull { it.status == ToolStepStatus.RUNNING }
+                                        pendingToolHint = if (activeStep != null) {
+                                            "Step ${activeStep.stepIndex}/${progressSnap.steps.size}: ${activeStep.operationLabel}..."
+                                        } else if (progressSnap.allVerified) {
+                                            "Execution Verified (${progressSnap.verifiedCount}/${progressSnap.steps.size})"
+                                        } else {
+                                            "Verifying tool execution..."
+                                        }
+                                        liveParts = existingParts + listOf(
+                                            InChatUiPart.ToolChainStatusPanel(
+                                                partId = "overlay_chain_${progressSnap.chainId}",
+                                                snapshot = progressSnap
+                                            )
+                                        )
+                                    }
+                                )
+                                chainSnapshot = runResult.snapshot
+                                newParts.addAll(runResult.uiParts)
+                                liveParts = existingParts + newParts
+                            }
+
+                            val baseAnswer = finalRawText.ifBlank {
+                                if (chainSnapshot?.allVerified == true) {
+                                    "Execution Verified (${chainSnapshot.verifiedCount}/${chainSnapshot.steps.size})."
+                                } else if (newParts.isNotEmpty()) {
+                                    "Action completed below."
+                                } else {
+                                    ""
+                                }
+                            }
+                            streamedText = localModelManager.toolOrchestrator.verifyAssistantClaim(
+                                assistantText = baseAnswer,
+                                snapshot = chainSnapshot
+                            )
+                            pendingToolHint = null
+                            isStreaming = false
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e
                         } catch (e: Exception) {

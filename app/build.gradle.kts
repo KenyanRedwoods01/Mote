@@ -99,6 +99,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-service:2.8.7")
 
+    // Lottie Compose for real-time voice-reactive waveform animations
+    implementation("com.airbnb.android:lottie-compose:6.6.2")
+
     // Serialization, Coroutines, Security, Annotations
     implementation("androidx.annotation:annotation:1.9.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")

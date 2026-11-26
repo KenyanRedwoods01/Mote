@@ -381,6 +381,8 @@ fun SettingsScreen(
     val toolPermissions by viewModel.toolPermissions.collectAsStateWithLifecycle()
     val utilityStatus by viewModel.utilityStatus.collectAsStateWithLifecycle()
     val actionError by viewModel.actionError.collectAsStateWithLifecycle()
+    val systemHealth by viewModel.systemHealth.collectAsStateWithLifecycle()
+    val lastAdaptiveRouteNote by viewModel.lastAdaptiveRouteNote.collectAsStateWithLifecycle()
     var haptics by remember { mutableStateOf(true) }
     var authError by remember { mutableStateOf<String?>(null) }
     var showToolPermissions by remember { mutableStateOf(false) }
@@ -579,6 +581,15 @@ fun SettingsScreen(
                         }
                     }
                 }
+            }
+            item(key = "settings_system_health_adaptive_card") {
+                SystemHealthAdaptiveCard(
+                    health = systemHealth,
+                    adaptiveEnabled = studioPrefs.adaptiveThermalBatteryRouting,
+                    lastRouteNote = lastAdaptiveRouteNote,
+                    onToggleAdaptive = { viewModel.setAdaptiveThermalBatteryRouting(it) },
+                    onRefresh = { viewModel.refreshSystemHealth() }
+                )
             }
             item(key = "settings_tool_model_permissions_entry") {
                 val tokens = LocalMoteColors.current

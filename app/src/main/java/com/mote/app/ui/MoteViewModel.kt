@@ -21,6 +21,7 @@ import com.mote.app.ai.LocalHardwareBackend
 import com.mote.app.ai.RegisteredToolDescriptor
 import com.mote.app.ai.StreamParserTelemetry
 import com.mote.app.ai.StreamParserTelemetrySnapshot
+import com.mote.app.ai.ToolChainExecutionSnapshot
 import com.mote.app.ai.ToolExecutionAuditEntry
 import com.mote.app.ai.ToolUsageStatsSnapshot
 import com.mote.app.control.BatteryTelemetrySnapshot
@@ -28,6 +29,7 @@ import com.mote.app.control.CountdownTimerItem
 import com.mote.app.control.LanServerUiState
 import com.mote.app.control.LocalLanApiServer
 import com.mote.app.control.StopwatchUiState
+import com.mote.app.control.SystemHealthSnapshot
 import com.mote.app.control.ToolPermissionsSnapshot
 import com.mote.app.data.BenchmarkPromptPreset
 import com.mote.app.data.BotStore
@@ -136,6 +138,8 @@ class MoteViewModel(
     val studioPrefs: StateFlow<ModelStudioPrefsEntity> = localModelManager.prefs
     val ecoInferenceRestricted: StateFlow<Boolean> = localModelManager.ecoInferenceRestricted
     val batteryTelemetry: StateFlow<BatteryTelemetrySnapshot> = localModelManager.batteryTelemetry
+    val systemHealth: StateFlow<SystemHealthSnapshot> = localModelManager.systemHealth.health
+    val activeToolChain: StateFlow<ToolChainExecutionSnapshot?> = localModelManager.toolOrchestrator.activeChain
     val allBenchmarks: StateFlow<List<ModelBenchmarkEntity>> = localModelManager.allBenchmarks
     val liveBenchmark: StateFlow<LiveBenchmarkProgress?> = localModelManager.liveBenchmark
 
@@ -197,6 +201,9 @@ class MoteViewModel(
 
     private val _utilityStatus = MutableStateFlow<String?>(null)
     val utilityStatus: StateFlow<String?> = _utilityStatus.asStateFlow()
+
+    private val _lastAdaptiveRouteNote = MutableStateFlow<String?>(null)
+    val lastAdaptiveRouteNote: StateFlow<String?> = _lastAdaptiveRouteNote.asStateFlow()
 
     private val _isBenchmarking = MutableStateFlow(false)
     val isBenchmarking: StateFlow<Boolean> = _isBenchmarking.asStateFlow()
@@ -511,6 +518,20 @@ class MoteViewModel(
         }
     }
 
+    fun setAdaptiveThermalBatteryRouting(enabled: Boolean) {
+        localModelManager.setAdaptiveThermalBatteryRouting(enabled)
+        _utilityStatus.value = if (enabled) {
+            "Battery & Thermal Adaptive Inference enabled (auto-switches Local ↔ Cloud)"
+        } else {
+            "Adaptive Inference paused — using manual model selection"
+        }
+    }
+
+    fun refreshSystemHealth() {
+        localModelManager.systemHealth.refreshNow()
+        localModelManager.refreshBatteryTelemetry()
+    }
+
     // Direct Clock Tool UI Controls
     fun toggleClockAlarm(alarmId: String, enabled: Boolean) =
         localModelManager.clockTools.toggleAlarmById(alarmId, enabled)
@@ -652,8 +673,6 @@ class MoteViewModel(
             }
 
             try {
-                val executedBlocks = mutableSetOf<String>()
-                val liveUiParts = mutableListOf<InChatUiPart>()
                 val clockContext = buildString {
                     appendLine(localModelManager.clockTools.buildClockContextForAi())
                     appendLine()
@@ -663,23 +682,35 @@ class MoteViewModel(
                 }.trim()
                 val enabledToolIds = localModelManager.toolRegistry.enabledToolIds(studioPrefs.value)
 
-                // If user preferred a downloaded local model that isn't loaded in RAM yet, load it automatically
-                var useLocalLiteRt = attachedBitmap == null &&
-                    preferLoadedLocalChat.value &&
-                    localModelManager.loadedModel.value?.supportsOnDeviceInference == true
-                if (!useLocalLiteRt && attachedBitmap == null && studioPrefs.value.preferLocalOfflineChat) {
-                    val savedId = studioPrefs.value.activeLocalModelId
-                    if (!savedId.isNullOrBlank()) {
-                        _chatStreamState.value = ChatStreamUiState.Streaming(
-                            partialText = "",
-                            botName = botName,
-                            elapsedMs = 0L,
-                            pendingToolHint = "Loading downloaded model into RAM..."
-                        )
-                        val loadedResult = localModelManager.loadModel(savedId)
-                        useLocalLiteRt = loadedResult.isSuccess
+                // Step 1: Battery & Thermal Adaptive Inference Routing via SystemHealthManager
+                val currentPrefs = studioPrefs.value
+                var loadedLocal = localModelManager.loadedModel.value
+                val savedLocalId = currentPrefs.activeLocalModelId
+                val hasDownloadedSavedLocal = !savedLocalId.isNullOrBlank() &&
+                    localModelManager.models.value.any {
+                        it.id == savedLocalId && it.status == LocalModelDownloadStatus.DOWNLOADED
                     }
+
+                val preRoute = localModelManager.systemHealth.resolveInferenceRoute(
+                    adaptiveEnabled = currentPrefs.adaptiveThermalBatteryRouting,
+                    userPrefersLocal = preferLoadedLocalChat.value || currentPrefs.preferLocalOfflineChat,
+                    hasLocalModelReady = (loadedLocal?.supportsOnDeviceInference == true) || hasDownloadedSavedLocal,
+                    hasAttachedImage = attachedBitmap != null
+                )
+
+                var useLocalLiteRt = preRoute.useLocalEngine
+                if (useLocalLiteRt && loadedLocal == null && !savedLocalId.isNullOrBlank()) {
+                    _chatStreamState.value = ChatStreamUiState.Streaming(
+                        partialText = "",
+                        botName = botName,
+                        elapsedMs = 0L,
+                        pendingToolHint = "Adaptive Health: Loading local LiteRT-LM model into RAM..."
+                    )
+                    val loadedResult = localModelManager.loadModel(savedLocalId)
+                    loadedLocal = loadedResult.getOrNull()
+                    useLocalLiteRt = loadedLocal?.supportsOnDeviceInference == true
                 }
+                _lastAdaptiveRouteNote.value = preRoute.engineReason
 
                 val streamFlow = if (useLocalLiteRt) {
                     val localSystemInstruction = buildString {
@@ -719,24 +750,19 @@ class MoteViewModel(
                 }
 
                 var cleanFinalAnswer = ""
+                var latestElapsedMs = 0L
                 val finalToolBlocks = mutableListOf<String>()
 
                 streamFlow.collect { event ->
                     when (event) {
                         is ChatStreamEvent.Delta -> {
-                            for (rawJson in event.completedToolJsonBlocks) {
-                                if (executedBlocks.add(rawJson)) {
-                                    executeChatToolJson(rawJson)?.let { part ->
-                                        liveUiParts.add(part)
-                                    }
-                                }
-                            }
+                            latestElapsedMs = event.elapsedMs
                             _chatStreamState.value = ChatStreamUiState.Streaming(
                                 partialText = event.accumulatedText,
                                 botName = botName,
                                 elapsedMs = event.elapsedMs,
-                                pendingToolHint = event.pendingToolHint,
-                                liveParts = liveUiParts.toList()
+                                pendingToolHint = event.pendingToolHint ?: if (preRoute.switchedAutomatically) preRoute.engineReason else null,
+                                liveParts = emptyList()
                             )
                         }
                         is ChatStreamEvent.Completed -> {
@@ -748,16 +774,74 @@ class MoteViewModel(
                     }
                 }
 
-                for (rawJson in finalToolBlocks) {
-                    if (executedBlocks.add(rawJson)) {
-                        executeChatToolJson(rawJson)?.let { part ->
-                            liveUiParts.add(part)
-                        }
-                    }
+                // Step 2: Sequential Tool Chain Execution + Proof-of-Execution Verification
+                val decodedInvocations = finalToolBlocks.mapNotNull { rawJson ->
+                    ChatGenUiToolProtocol.decodeToolInvocation(rawJson)
                 }
 
-                val cleanAnswer = cleanFinalAnswer.ifBlank {
+                // If the user explicitly asked for a device action / multi-step chain (e.g. follow-up alarm
+                // or "take a screenshot and share it on WhatsApp") and the LLM emitted zero tool calls,
+                // deterministically plan & execute the chain so the assistant never hallucinates "Done!".
+                val plannedInvocations = if (decodedInvocations.isEmpty() && attachedBitmap == null) {
+                    localModelManager.toolOrchestrator.planFallbackChainIfUnverified(
+                        userPrompt = effectivePrompt,
+                        enabledToolIds = enabledToolIds
+                    )
+                } else {
+                    decodedInvocations
+                }
+
+                val liveUiParts = mutableListOf<InChatUiPart>()
+                var chainSnapshot: ToolChainExecutionSnapshot? = null
+
+                if (plannedInvocations.isNotEmpty()) {
+                    val chainTitle = if (plannedInvocations.size > 1) {
+                        "Sequential Tool Chain"
+                    } else {
+                        "Device Action Verification"
+                    }
+                    val runResult = localModelManager.toolOrchestrator.executeChain(
+                        rawInvocations = plannedInvocations,
+                        chainTitle = chainTitle,
+                        onProgress = { progressSnap ->
+                            val activeStep = progressSnap.steps.firstOrNull {
+                                it.status == com.mote.app.ai.ToolStepStatus.RUNNING
+                            }
+                            val progressHint = if (activeStep != null) {
+                                "Step ${activeStep.stepIndex}/${progressSnap.steps.size}: ${activeStep.operationLabel} (${activeStep.engineLabel})..."
+                            } else if (progressSnap.allVerified) {
+                                "Execution Verified (${progressSnap.verifiedCount}/${progressSnap.steps.size})"
+                            } else {
+                                "Verifying tool execution..."
+                            }
+                            _chatStreamState.value = ChatStreamUiState.Streaming(
+                                partialText = cleanFinalAnswer,
+                                botName = botName,
+                                elapsedMs = latestElapsedMs,
+                                pendingToolHint = progressHint,
+                                liveParts = listOf(
+                                    InChatUiPart.ToolChainStatusPanel(
+                                        partId = "live_chain_${progressSnap.chainId}",
+                                        snapshot = progressSnap
+                                    )
+                                )
+                            )
+                        }
+                    )
+                    chainSnapshot = runResult.snapshot
+                    liveUiParts.addAll(runResult.uiParts)
+                }
+
+                val baseAnswer = cleanFinalAnswer.ifBlank {
                     when (val firstPart = liveUiParts.firstOrNull()) {
+                        is InChatUiPart.ToolChainStatusPanel -> {
+                            val snap = firstPart.snapshot
+                            if (snap.allVerified) {
+                                "Execution Verified (${snap.verifiedCount}/${snap.steps.size})."
+                            } else {
+                                snap.steps.firstOrNull()?.summary ?: "Tool chain finished."
+                            }
+                        }
                         is InChatUiPart.ClockAlarmsPanel -> firstPart.actionSummary
                         is InChatUiPart.ClockTimerPanel -> firstPart.actionSummary
                         is InChatUiPart.ClockStopwatchPanel -> firstPart.actionSummary
@@ -769,6 +853,11 @@ class MoteViewModel(
                         null -> ""
                     }
                 }
+
+                val cleanAnswer = localModelManager.toolOrchestrator.verifyAssistantClaim(
+                    assistantText = baseAnswer,
+                    snapshot = chainSnapshot
+                )
 
                 if (cleanAnswer.isNotBlank()) {
                     if (liveUiParts.isNotEmpty()) {

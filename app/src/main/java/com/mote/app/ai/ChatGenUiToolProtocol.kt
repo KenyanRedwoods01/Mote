@@ -80,6 +80,11 @@ sealed interface InChatUiPart {
         val detailLines: List<String> = emptyList(),
         val autoAnalyzePrompt: String? = null
     ) : InChatUiPart
+
+    data class ToolChainStatusPanel(
+        override val partId: String,
+        val snapshot: ToolChainExecutionSnapshot
+    ) : InChatUiPart
 }
 
 @Serializable
@@ -119,9 +124,11 @@ object ChatGenUiToolProtocol {
             return@buildString
         }
 
-        appendLine("REAL-TIME AUTOMATIC DEVICE TOOLS & IN-CHAT GENERATIVE UI PROTOCOL:")
-        appendLine("Invoke enabled tools AUTOMATICALLY inline during your streaming response by emitting a block wrapped in $OPEN_TAG and $CLOSE_TAG.")
-        appendLine("Every tool executes immediately in real time on the Android device (no manual follow-up button needed). Always include a concise 1-2 sentence confirmation alongside any tool block. Never wrap $OPEN_TAG in markdown code fences.")
+        appendLine("REAL-TIME AUTOMATIC DEVICE TOOLS & SEQUENTIAL CHAINING PROTOCOL (CRITICAL ENGINE VERIFICATION RULES):")
+        appendLine("1. MANDATORY EXECUTION PROOF: You MUST emit a $OPEN_TAG...$CLOSE_TAG block on EVERY turn where the user requests ANY action (alarms, timers, stopwatch, calendar, camera, flashlight, screenshot, sharing, opening apps, navigation). NEVER say 'Done', 'Set', 'Created', or 'Opened' in plain text without emitting the matching $OPEN_TAG block in THIS EXACT response — prior chat messages omit tool tags, so always emit fresh tags!")
+        appendLine("2. MULTI-STEP SEQUENTIAL TOOL CHAINS: When the user asks for multiple dependent steps (e.g. 'Take a screenshot and share it on WhatsApp' or 'Set a 7am alarm and start a 5m timer'), emit multiple $OPEN_TAG...$CLOSE_TAG blocks in exact execution order OR use runToolChain. Downstream steps automatically inherit intermediate outputs like \$lastSavedUri and \$lastCaptureId.")
+        appendLine("   Example chain: $OPEN_TAG{\"tool\":\"takeScreenshot\",\"args\":{\"label\":\"Share Snapshot\"}}$CLOSE_TAG $OPEN_TAG{\"tool\":\"shareToApp\",\"args\":{\"appName\":\"WhatsApp\",\"mediaUri\":\"\$lastSavedUri\",\"text\":\"Check out this screenshot\"}}$CLOSE_TAG")
+        appendLine("3. Never wrap $OPEN_TAG in markdown code fences. Always keep your visible confirmation concise (1-2 sentences).")
         appendLine()
 
         if (GenUiToolRegistry.TOOL_ALARM_MANAGER in enabledToolIds) {
@@ -177,8 +184,9 @@ object ChatGenUiToolProtocol {
         }
 
         if (GenUiToolRegistry.TOOL_APP_LAUNCHER in enabledToolIds) {
-            appendLine("APP NAVIGATION TOOL (UsageStatsManager + intent-based launching for all common & installed apps including Chrome, YouTube, Gmail, Maps, WhatsApp, Spotify, Instagram, TikTok, Discord, Telegram, Reddit, Netflix, Calculator, Clock, Play Store, Settings):")
-            appendLine("- openApp: $OPEN_TAG{\"tool\":\"openApp\",\"args\":{\"appName\":\"YouTube\"}}$CLOSE_TAG (also accepts \"Chrome\", \"Gmail\", \"Maps\", \"WhatsApp\", \"Spotify\", \"recent\", etc.)")
+            appendLine("APP NAVIGATION & SHARING TOOL (UsageStatsManager + PackageManager Manifest + Intent launching/sharing):")
+            appendLine("- openApp: $OPEN_TAG{\"tool\":\"openApp\",\"args\":{\"appName\":\"YouTube\"}}$CLOSE_TAG (opens Chrome, YouTube, Gmail, Maps, WhatsApp, Spotify, or any app in the Installed Apps Manifest)")
+            appendLine("- shareToApp (shares a screenshot URI or text directly to WhatsApp, Telegram, Gmail, Messages, etc.): $OPEN_TAG{\"tool\":\"shareToApp\",\"args\":{\"appName\":\"WhatsApp\",\"mediaUri\":\"\$lastSavedUri\",\"text\":\"Here is the screenshot\"}}$CLOSE_TAG")
             appendLine("- openRecentApp (re-opens most recently used app via UsageStatsManager): $OPEN_TAG{\"tool\":\"openRecentApp\",\"args\":{\"index\":0}}$CLOSE_TAG")
             appendLine("- getRecentApps (lists recently used apps with UsageStats foreground time): $OPEN_TAG{\"tool\":\"getRecentApps\",\"args\":{\"limit\":8}}$CLOSE_TAG")
             appendLine("- listInstalledApps: $OPEN_TAG{\"tool\":\"listInstalledApps\",\"args\":{\"query\":\"\"}}$CLOSE_TAG")
@@ -274,6 +282,10 @@ object ChatGenUiToolProtocol {
                         "Requesting MediaProjection screen capture..."
                     partialJson.contains("RecentApp", true) || partialJson.contains("getRecentApps", true) ->
                         "Reading app UsageStats history..."
+                    partialJson.contains("shareToApp", true) || partialJson.contains("shareContent", true) ->
+                        "Sharing content to target app..."
+                    partialJson.contains("runToolChain", true) ->
+                        "Orchestrating sequential tool chain..."
                     partialJson.contains("openApp", true) || partialJson.contains("listInstalledApps", true) ->
                         "Launching Android app..."
                     partialJson.contains("navigateMaps", true) ->

@@ -163,6 +163,8 @@ fun FloatingAssistantView(
     var speechState by remember { mutableStateOf(SpeechRecognitionState()) }
     var useLiveStreamMode by remember { mutableStateOf(onSendStreamingChat != null) }
     var showModelSwitcher by remember { mutableStateOf(false) }
+    var showVoiceOverlay by remember { mutableStateOf(false) }
+    var pendingVoiceCommandDispatch by remember { mutableStateOf<String?>(null) }
 
     val speechController = remember(context) {
         GoogleSpeechInputController(
@@ -171,8 +173,13 @@ fun FloatingAssistantView(
                 promptText = if (promptPrefixBeforeSpeech.isBlank()) partial else "$promptPrefixBeforeSpeech $partial"
             },
             onFinalText = { finalText ->
-                promptText = if (promptPrefixBeforeSpeech.isBlank()) finalText else "$promptPrefixBeforeSpeech $finalText"
+                val combined = if (promptPrefixBeforeSpeech.isBlank()) finalText else "$promptPrefixBeforeSpeech $finalText"
+                promptText = combined
                 promptPrefixBeforeSpeech = ""
+                if (showVoiceOverlay && combined.isNotBlank()) {
+                    showVoiceOverlay = false
+                    pendingVoiceCommandDispatch = combined
+                }
             },
             onStateChanged = { next ->
                 speechState = next
@@ -185,7 +192,7 @@ fun FloatingAssistantView(
     }
 
     LaunchedEffect(isExpanded) {
-        if (!isExpanded && speechState.isListening) {
+        if (!isExpanded && speechState.isListening && !showVoiceOverlay) {
             speechController.stopListening()
         }
     }
@@ -209,11 +216,13 @@ fun FloatingAssistantView(
         if (speechState.isListening) {
             hapticManager.onVoiceStop()
             speechController.stopListening()
+            showVoiceOverlay = false
             return
         }
         hapticManager.onVoiceStart()
         promptPrefixBeforeSpeech = promptText.trim()
         if (speechController.isOnDeviceRecognizerAvailable()) {
+            showVoiceOverlay = true
             speechController.startListening()
         } else {
             val speechIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -327,6 +336,15 @@ fun FloatingAssistantView(
             onSubmitPrompt(trimmed, selectedBot)
         }
         promptText = ""
+    }
+
+    LaunchedEffect(pendingVoiceCommandDispatch) {
+        val cmd = pendingVoiceCommandDispatch
+        if (!cmd.isNullOrBlank()) {
+            pendingVoiceCommandDispatch = null
+            isExpanded = true
+            dispatchPrompt(cmd)
+        }
     }
 
     // Unified physics-driven spring transition for morphing minimized icon -> full input interface
@@ -1260,6 +1278,24 @@ fun FloatingAssistantView(
                 }
             }
         }
+
+        VoiceAssistantOverlay(
+            visible = showVoiceOverlay,
+            speechState = speechState,
+            activeBotName = selectedBot.name,
+            activeRouteLabel = activeModelLabel,
+            onToggleListening = { requestVoiceInput() },
+            onQuickVoiceCommand = { cmd ->
+                speechController.stopListening()
+                showVoiceOverlay = false
+                isExpanded = true
+                dispatchPrompt(cmd)
+            },
+            onDismiss = {
+                speechController.stopListening()
+                showVoiceOverlay = false
+            }
+        )
     }
 
     if (showModelSwitcher) {

@@ -11,12 +11,15 @@ import java.util.Locale
 data class SpeechRecognitionState(
     val isListening: Boolean = false,
     val rmsLevel: Float = 0f,
-    val errorText: String? = null
-)
+    val errorText: String? = null,
+    val partialText: String = ""
+) {
+    val errorMessage: String? get() = errorText
+}
 
 /**
  * In-place Google Speech Recognition API controller backed by Android's [SpeechRecognizer].
- * Streams partial dictation live into the caller's input field and cleans up native resources on dispose.
+ * Streams partial dictation and live microphone RMS amplitude into the caller and voice overlay.
  */
 class GoogleSpeechInputController(
     context: Context,
@@ -26,12 +29,16 @@ class GoogleSpeechInputController(
 ) {
     private val appContext = context.applicationContext
     private var recognizer: SpeechRecognizer? = null
+    private var lastPartialText: String = ""
+    private var lastRmsLevel: Float = 0.15f
 
     fun isOnDeviceRecognizerAvailable(): Boolean =
         SpeechRecognizer.isRecognitionAvailable(appContext)
 
     fun startListening() {
         stopListening()
+        lastPartialText = ""
+        lastRmsLevel = 0.15f
         if (!SpeechRecognizer.isRecognitionAvailable(appContext)) {
             onStateChanged(
                 SpeechRecognitionState(
@@ -46,22 +53,25 @@ class GoogleSpeechInputController(
         recognizer = sr
         sr.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
-                onStateChanged(SpeechRecognitionState(isListening = true, rmsLevel = 0.2f))
+                lastRmsLevel = 0.2f
+                onStateChanged(SpeechRecognitionState(isListening = true, rmsLevel = lastRmsLevel, partialText = lastPartialText))
             }
 
             override fun onBeginningOfSpeech() {
-                onStateChanged(SpeechRecognitionState(isListening = true, rmsLevel = 0.4f))
+                lastRmsLevel = 0.4f
+                onStateChanged(SpeechRecognitionState(isListening = true, rmsLevel = lastRmsLevel, partialText = lastPartialText))
             }
 
             override fun onRmsChanged(rmsdB: Float) {
                 val normalized = ((rmsdB + 2f) / 12f).coerceIn(0.1f, 1f)
-                onStateChanged(SpeechRecognitionState(isListening = true, rmsLevel = normalized))
+                lastRmsLevel = normalized
+                onStateChanged(SpeechRecognitionState(isListening = true, rmsLevel = normalized, partialText = lastPartialText))
             }
 
             override fun onBufferReceived(buffer: ByteArray?) = Unit
 
             override fun onEndOfSpeech() {
-                onStateChanged(SpeechRecognitionState(isListening = false, rmsLevel = 0f))
+                onStateChanged(SpeechRecognitionState(isListening = false, rmsLevel = 0f, partialText = lastPartialText))
             }
 
             override fun onError(error: Int) {
@@ -74,7 +84,7 @@ class GoogleSpeechInputController(
                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Listening timed out."
                     else -> "Voice input stopped (code $error)."
                 }
-                onStateChanged(SpeechRecognitionState(isListening = false, rmsLevel = 0f, errorText = msg))
+                onStateChanged(SpeechRecognitionState(isListening = false, rmsLevel = 0f, errorText = msg, partialText = lastPartialText))
             }
 
             override fun onResults(results: Bundle?) {
@@ -82,7 +92,8 @@ class GoogleSpeechInputController(
                     ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()
                     ?.trim()
-                onStateChanged(SpeechRecognitionState(isListening = false, rmsLevel = 0f))
+                lastPartialText = text.orEmpty()
+                onStateChanged(SpeechRecognitionState(isListening = false, rmsLevel = 0f, partialText = lastPartialText))
                 if (!text.isNullOrBlank()) {
                     onFinalText(text)
                 }
@@ -94,6 +105,8 @@ class GoogleSpeechInputController(
                     ?.firstOrNull()
                     ?.trim()
                 if (!partial.isNullOrBlank()) {
+                    lastPartialText = partial
+                    onStateChanged(SpeechRecognitionState(isListening = true, rmsLevel = lastRmsLevel, partialText = partial))
                     onPartialText(partial)
                 }
             }
@@ -107,7 +120,7 @@ class GoogleSpeechInputController(
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         }
-        onStateChanged(SpeechRecognitionState(isListening = true, rmsLevel = 0.15f))
+        onStateChanged(SpeechRecognitionState(isListening = true, rmsLevel = 0.15f, partialText = ""))
         sr.startListening(intent)
     }
 
@@ -119,7 +132,7 @@ class GoogleSpeechInputController(
         } catch (_: Exception) {
         }
         recognizer = null
-        onStateChanged(SpeechRecognitionState(isListening = false, rmsLevel = 0f))
+        onStateChanged(SpeechRecognitionState(isListening = false, rmsLevel = 0f, partialText = lastPartialText))
     }
 
     fun release() {

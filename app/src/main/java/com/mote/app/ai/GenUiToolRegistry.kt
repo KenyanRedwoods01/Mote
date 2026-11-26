@@ -699,13 +699,14 @@ class AppNavigationTool(
         id = GenUiToolRegistry.TOOL_APP_LAUNCHER,
         displayName = "App Navigation Tool",
         category = "Apps · UsageStats + Intents",
-        description = "Opens Chrome, YouTube, Gmail, Maps, WhatsApp, Spotify, and any installed or recently used app via UsageStats & Intents.",
-        operations = listOf("openApp", "openRecentApp", "getRecentApps", "listInstalledApps"),
+        description = "Opens Chrome, YouTube, Gmail, Maps, WhatsApp, Spotify, and any installed or recently used app via UsageStats & Intents, and shares screenshots/content directly to apps.",
+        operations = listOf("openApp", "shareToApp", "openRecentApp", "getRecentApps", "listInstalledApps"),
         requiredPermissionLabels = listOf("App Usage Access")
     )
 
     override val supportedOperations: Set<String> = setOf(
         "openapp", "launchapp", "startapp", "app_open", "navigateapp", "open_application",
+        "sharetoapp", "sharecontent", "sharescreenshot", "share_screenshot",
         "openrecentapp", "switchlastapp", "lastapp", "recentapp",
         "getrecentapps", "recentapps", "appusage", "usagestats",
         "listinstalledapps", "listapps", "findapp"
@@ -714,6 +715,16 @@ class AppNavigationTool(
     override suspend fun execute(operation: String, args: JsonObject): GenUiToolResult {
         val op = operation.lowercase(Locale.US)
         val res = when (op) {
+            "sharetoapp", "sharecontent", "sharescreenshot", "share_screenshot" -> {
+                val targetApp = args.str("appName") ?: args.str("app") ?: args.str("targetApp")
+                val mediaUri = args.str("mediaUri") ?: args.str("uri")
+                val text = args.str("text") ?: args.str("message") ?: args.str("caption")
+                deviceTools.shareContent(
+                    targetAppQuery = targetApp,
+                    mediaUriString = mediaUri,
+                    textMessage = text
+                )
+            }
             "openrecentapp", "switchlastapp", "lastapp", "recentapp" -> {
                 deviceTools.openRecentApp(index = args.intVal("index") ?: 0)
             }

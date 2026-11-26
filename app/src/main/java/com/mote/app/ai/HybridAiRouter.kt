@@ -278,8 +278,15 @@ class HybridAiRouter {
         val recentTurns: List<Content> = history
             .takeLast(config.contextWindowTurns.coerceIn(2, 20))
             .map { msg ->
-                content(role = if (msg.chatRole() == ChatRole.USER) "user" else "model") {
-                    text(msg.text)
+                val isUser = msg.chatRole() == ChatRole.USER
+                content(role = if (isUser) "user" else "model") {
+                    text(
+                        if (isUser) {
+                            msg.text
+                        } else {
+                            "[Prior turn summary — tool call tags omitted; emit fresh <<<TOOL_CALL>>> tags for any new request] ${msg.text}"
+                        }
+                    )
                 }
             }
 
