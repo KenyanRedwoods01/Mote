@@ -103,6 +103,9 @@ class ToolChainStateManager(
         if (context.lastDialedNumber.isNullOrBlank()) {
             dao.getLatestStateByKey(KEY_LAST_DIALED_NUMBER)?.let { context.lastDialedNumber = it.outputValue }
         }
+        if (context.lastClipboardText.isNullOrBlank()) {
+            dao.getLatestStateByKey(KEY_LAST_CLIPBOARD_TEXT)?.let { context.lastClipboardText = it.outputValue }
+        }
     }
 
     suspend fun getChainStatesSnapshot(chainId: String): List<ToolChainStateEntity> {
@@ -124,6 +127,7 @@ class ToolChainStateManager(
             KEY_LAST_SEARCH_QUERY -> context.lastSearchQuery = row.outputValue
             KEY_LAST_ALARM_ID -> context.lastAlarmId = row.outputValue
             KEY_LAST_EVENT_ID -> context.lastEventId = row.outputValue
+            KEY_LAST_CLIPBOARD_TEXT -> context.lastClipboardText = row.outputValue
         }
         context.stepOutputs[row.outputKey] = row.outputValue
     }
@@ -138,5 +142,6 @@ class ToolChainStateManager(
         const val KEY_LAST_SEARCH_QUERY = "lastSearchQuery"
         const val KEY_LAST_ALARM_ID = "lastAlarmId"
         const val KEY_LAST_EVENT_ID = "lastEventId"
+        const val KEY_LAST_CLIPBOARD_TEXT = "lastClipboardText"
     }
 }

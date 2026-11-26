@@ -109,6 +109,15 @@ sealed interface InChatUiPart {
         val targetLabel: String,
         val success: Boolean = true
     ) : InChatUiPart
+
+    data class ClipboardPanel(
+        override val partId: String,
+        val title: String,
+        val summary: String,
+        val clipboardText: String?,
+        val badge: String,
+        val success: Boolean = true
+    ) : InChatUiPart
 }
 
 @Serializable
@@ -149,11 +158,12 @@ object ChatGenUiToolProtocol {
         }
 
         appendLine("REAL-TIME AUTOMATIC DEVICE TOOLS & SEQUENTIAL CHAINING PROTOCOL (CRITICAL ENGINE VERIFICATION RULES):")
-        appendLine("1. MANDATORY EXECUTION PROOF: You MUST emit a $OPEN_TAG...$CLOSE_TAG block on EVERY turn where the user requests ANY action (alarms, timers, stopwatch, calendar, camera, flashlight, screenshot, OCR, notes, sharing, opening apps, Chrome/YouTube search, dialing phone, live voice call relay, navigation). NEVER say 'Done', 'Set', 'Created', 'Saved', or 'Opened' in plain text without emitting the matching $OPEN_TAG block in THIS EXACT response!")
-        appendLine("2. MULTI-STEP SEQUENTIAL TOOL CHAINS: Emit multiple $OPEN_TAG...$CLOSE_TAG blocks in exact execution order OR use runToolChain. Downstream steps automatically inherit intermediate state outputs (\$lastCaptureId, \$lastSavedUri, \$lastExtractedText, \$lastOpenedApp, \$lastDialedNumber).")
+        appendLine("1. MANDATORY EXECUTION PROOF: You MUST emit a $OPEN_TAG...$CLOSE_TAG block on EVERY turn where the user requests ANY action (alarms, timers, stopwatch, calendar, camera, flashlight, screenshot, OCR, notes, clipboard read/write/paste, sharing, opening apps, Chrome/YouTube search, dialing phone, live voice call relay, navigation). NEVER say 'Done', 'Set', 'Created', 'Saved', 'Copied', or 'Opened' in plain text without emitting the matching $OPEN_TAG block in THIS EXACT response!")
+        appendLine("2. MULTI-STEP SEQUENTIAL TOOL CHAINS: Emit multiple $OPEN_TAG...$CLOSE_TAG blocks in exact execution order OR use runToolChain. Downstream steps automatically inherit intermediate state outputs (\$lastCaptureId, \$lastSavedUri, \$lastExtractedText, \$lastClipboardText, \$lastOpenedApp, \$lastDialedNumber).")
         appendLine("   Example 1 (Screenshot -> OCR -> Notes): $OPEN_TAG{\"tool\":\"takeScreenshot\",\"args\":{\"label\":\"OCR Capture\"}}$CLOSE_TAG $OPEN_TAG{\"tool\":\"ocrAnalysis\",\"args\":{\"captureId\":\"\$lastCaptureId\"}}$CLOSE_TAG $OPEN_TAG{\"tool\":\"saveNote\",\"args\":{\"title\":\"Screen OCR Note\",\"content\":\"\$lastExtractedText\"}}$CLOSE_TAG")
-        appendLine("   Example 2 (Chrome + Search with Siri overlay): $OPEN_TAG{\"tool\":\"searchInApp\",\"args\":{\"appName\":\"Chrome\",\"query\":\"Android AI news\"}}$CLOSE_TAG")
+        appendLine("   Example 2 (Chrome + Search + Screenshot): $OPEN_TAG{\"tool\":\"searchInApp\",\"args\":{\"appName\":\"Chrome\",\"query\":\"Android AI news\"}}$CLOSE_TAG $OPEN_TAG{\"tool\":\"takeScreenshot\",\"args\":{\"label\":\"Chrome Search\"}}$CLOSE_TAG")
         appendLine("   Example 3 (Phone + Real-Time STT/TTS Voice Relay): $OPEN_TAG{\"tool\":\"dialPhone\",\"args\":{\"phoneNumber\":\"5550199\"}}$CLOSE_TAG $OPEN_TAG{\"tool\":\"startVoiceCallRelay\",\"args\":{\"targetLabel\":\"Call 5550199\",\"openingGreeting\":\"Hello, this is Mote assistant calling on behalf of my user.\"}}$CLOSE_TAG")
+        appendLine("   Example 4 (Clipboard -> Save Note / Search): $OPEN_TAG{\"tool\":\"readClipboard\",\"args\":{}}$CLOSE_TAG $OPEN_TAG{\"tool\":\"saveNote\",\"args\":{\"title\":\"Clipboard Note\",\"content\":\"\$lastClipboardText\"}}$CLOSE_TAG")
         appendLine("3. Never wrap $OPEN_TAG in markdown code fences. Always keep your visible confirmation concise (1-2 sentences).")
         appendLine()
 
@@ -214,6 +224,13 @@ object ChatGenUiToolProtocol {
         appendLine("- saveNote: $OPEN_TAG{\"tool\":\"saveNote\",\"args\":{\"title\":\"Screen OCR Note\",\"content\":\"\$lastExtractedText\",\"source\":\"OCR Chain\"}}$CLOSE_TAG")
         appendLine("- listNotes: $OPEN_TAG{\"tool\":\"listNotes\",\"args\":{}}$CLOSE_TAG")
         appendLine("- deleteNote: $OPEN_TAG{\"tool\":\"deleteNote\",\"args\":{\"query\":\"Screen OCR Note\"}}$CLOSE_TAG")
+        appendLine()
+
+        appendLine("SYSTEM CLIPBOARD MANAGER TOOL (reads & writes Android ClipboardManager seamlessly across apps):")
+        appendLine("- readClipboard (reads current Android clipboard text into \$lastClipboardText): $OPEN_TAG{\"tool\":\"readClipboard\",\"args\":{}}$CLOSE_TAG")
+        appendLine("- writeClipboard (copies text or \$lastExtractedText to Android clipboard): $OPEN_TAG{\"tool\":\"writeClipboard\",\"args\":{\"text\":\"Hello from Mote\",\"label\":\"Mote AI\"}}$CLOSE_TAG")
+        appendLine("- clearClipboard (clears Android system clipboard): $OPEN_TAG{\"tool\":\"clearClipboard\",\"args\":{}}$CLOSE_TAG")
+        appendLine("- pasteToScreen (pastes clipboard or text into focused input field via Accessibility): $OPEN_TAG{\"tool\":\"pasteToScreen\",\"args\":{\"text\":\"\$lastClipboardText\"}}$CLOSE_TAG")
         appendLine()
 
         appendLine("PHONE & REAL-TIME VOICE CALL RELAY TOOL (ACTION_DIAL + free Google STT <-> AI <-> Android TTS continuous loop):")
@@ -333,6 +350,14 @@ object ChatGenUiToolProtocol {
                         "Starting Maps navigation..."
                     partialJson.contains("navigate", true) || partialJson.contains("openUrl", true) || partialJson.contains("searchWeb", true) || partialJson.contains("openSettings", true) ->
                         "Executing device navigation..."
+                    partialJson.contains("readClipboard", true) || partialJson.contains("getClipboard", true) ->
+                        "Reading Android system clipboard..."
+                    partialJson.contains("writeClipboard", true) || partialJson.contains("copyToClipboard", true) ->
+                        "Copying text to system clipboard..."
+                    partialJson.contains("clearClipboard", true) ->
+                        "Clearing system clipboard..."
+                    partialJson.contains("pasteToScreen", true) ->
+                        "Pasting clipboard into focused field..."
                     partialJson.contains("render_gen_ui", true) ->
                         "Streaming Generative UI widget..."
                     else -> "Executing live tool..."

@@ -1,7 +1,11 @@
 package com.mote.app.ai
 
+import android.content.Context
+import android.os.Build
 import com.mote.app.data.db.LocalModelDao
 import com.mote.app.data.db.ToolChainRunEntity
+import com.mote.app.service.MediaProjectionConsentBridge
+import com.mote.app.service.MoteAccessibilityService
 import com.mote.app.service.SystemOverlayStateBus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -80,6 +84,7 @@ class ToolChainContext {
     var lastSearchQuery: String? = null
     var lastAlarmId: String? = null
     var lastEventId: String? = null
+    var lastClipboardText: String? = null
     val stepOutputs: MutableMap<String, String> = linkedMapOf()
 }
 
@@ -94,21 +99,24 @@ data class ToolChainRunResult(
  *
  * Capabilities:
  * 1. Parses complex natural language instructions into atomic sequential tool chains
- *    (e.g., `Take screenshot -> OCR analysis -> Save to Notes`, `Open Chrome and search ...`,
- *    `Open phone and call <number> then start real-time STT/TTS voice relay`).
- * 2. Manages inter-dependent intermediate state (`ToolChainContext`) between atomic steps.
- * 3. Runs independent post-execution background verification via [GenUiToolRegistry.verifyExecutionInBackground]
+ *    (e.g., `Take screenshot -> OCR analysis -> Save to Notes`, `Open Chrome, search <query>, and take screenshot`,
+ *    `Read clipboard -> Save to Notes`, `Open phone and call <number> then start real-time STT/TTS voice relay`).
+ * 2. Manages inter-dependent intermediate state (`ToolChainContext` + Room `ToolChainStateManager`) between atomic steps.
+ * 3. Handles pre-flight MediaProjection consent & external-app render settle waits so multi-app workflows
+ *    (e.g. Chrome search -> Screenshot) execute reliably without backgrounded dialog stalls.
+ * 4. Runs independent post-execution background verification via [GenUiToolRegistry.verifyExecutionInBackground]
  *    before awarding an `EV-XXXXXX` execution receipt and `Execution Verified` badge.
- * 4. Broadcasts every step in real time to [SystemOverlayStateBus] so the animated Siri-style
+ * 5. Broadcasts every step in real time to [SystemOverlayStateBus] so the animated Siri-style
  *    system overlay floats live over Chrome, YouTube, Phone, and all external apps.
- * 5. Persists every triggered chain into Room (`tool_chain_runs`) for the chronological
+ * 6. Persists every triggered chain into Room (`tool_chain_runs`) for the chronological
  *    'Tool Execution Log' inside Chat History.
  */
 class SequentialToolOrchestrator(
     private val toolRegistry: GenUiToolRegistry,
     private val dao: LocalModelDao,
     private val scope: CoroutineScope,
-    val stateManager: ToolChainStateManager = ToolChainStateManager(dao, scope)
+    val stateManager: ToolChainStateManager = ToolChainStateManager(dao, scope),
+    private val appContext: Context? = null
 ) {
 
     private val serializerJson = Json {
@@ -234,6 +242,28 @@ class SequentialToolOrchestrator(
 
         publishSnapshot(complete = false)
 
+        // Pre-Flight MediaProjection Authorization for Multi-App Chains:
+        // If this workflow launches an external app (e.g., Chrome search) AND captures a screenshot
+        // afterward, launching Chrome immediately backgrounds Mote and detaches our Activity launcher.
+        // Acquiring & caching the MediaProjection token BEFORE Step 1 ensures the downstream screenshot
+        // over Chrome runs seamlessly without stalling on a backgrounded consent dialog!
+        val firstExternalIdx = invocations.indexOfFirst { isExternalAppTransitionStep(it.tool) }
+        val captureAfterExternal = firstExternalIdx >= 0 && invocations.drop(firstExternalIdx + 1)
+            .any { isScreenCaptureStep(it.tool) }
+        val canUseAccessibilityCapture = MoteAccessibilityService.instance != null &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+        if (captureAfterExternal &&
+            appContext != null &&
+            !canUseAccessibilityCapture &&
+            !MediaProjectionConsentBridge.hasCachedConsent()
+        ) {
+            SystemOverlayStateBus.publishAppContext(
+                appLabel = "Mote Chain",
+                statusBanner = "Authorize screen capture once before opening target app..."
+            )
+            MediaProjectionConsentBridge.preAuthorizeIfNeeded(appContext)
+        }
+
         for (i in invocations.indices) {
             val stepNumber = i + 1
             // Hydrate context from Room ToolChainStateEntity rows so state survives external app handoffs
@@ -314,9 +344,37 @@ class SequentialToolOrchestrator(
             }
 
             publishSnapshot(complete = false)
-            // Small inter-step settle window when launching an app before a subsequent chained step
-            if (i < invocations.lastIndex && isAppLaunchStep(resolvedInv.tool)) {
-                delay(280L)
+            // Smart Inter-Step External-App Transition & Render Settle Window:
+            // When Step i launches Chrome/YouTube/Maps/external app and Step i+1 captures the screen
+            // or reads OCR, wait for the external app to enter foreground and finish rendering!
+            if (i < invocations.lastIndex) {
+                val nextInv = invocations[i + 1]
+                val launchedExternal = isExternalAppTransitionStep(resolvedInv.tool)
+                val nextNeedsScreen = isScreenCaptureStep(nextInv.tool) ||
+                    nextInv.tool.lowercase(Locale.US) in setOf("pastetoscreen", "pastetext", "pastefocused")
+
+                if (launchedExternal && nextNeedsScreen) {
+                    val targetLabel = context.lastOpenedApp ?: resolvedInv.args["appName"]?.jsonPrimitive?.contentOrNull ?: "target app"
+                    SystemOverlayStateBus.publishAppContext(
+                        appLabel = targetLabel,
+                        statusBanner = "Waiting for $targetLabel to load before ${nextInv.tool}..."
+                    )
+                    // Poll until Android switches foreground away from Mote (if Accessibility is connected)
+                    val motePkg = appContext?.packageName
+                    if (MoteAccessibilityService.instance != null && !motePkg.isNullOrBlank()) {
+                        val deadline = System.currentTimeMillis() + 1_600L
+                        while (System.currentTimeMillis() < deadline &&
+                            MoteAccessibilityService.currentPackageName == motePkg
+                        ) {
+                            delay(140L)
+                        }
+                    }
+                    // Allow web search pages (Chrome/YouTube) enough time to paint results before snapping
+                    val isWebLoad = isWebSearchOrUrlStep(resolvedInv.tool)
+                    delay(if (isWebLoad) 2_200L else 1_100L)
+                } else if (launchedExternal) {
+                    delay(450L)
+                }
             }
         }
 
@@ -403,51 +461,106 @@ class SequentialToolOrchestrator(
         val raw = userPrompt.trim()
         if (raw.isBlank()) return emptyList()
 
-        // Pre-check direct "open <app> and search <query>" combined intent so it doesn't split awkwardly
+        // Pre-check direct "open <app> [and|,] search <query> [and|,|then|->] <downstream actions>"
+        // Handles natural punctuation like "open chrome,, searching something and taking the screenshot"
         val fullLower = raw.lowercase(Locale.US)
         val openAndSearchMatch = Regex(
-            """(?:open|launch)\s+(chrome|browser|youtube|yt|maps|google maps|play store|spotify|amazon)\s+(?:and\s+)?(?:search(?:\s+for)?|look\s+up|find)\s+(.+)""",
+            """(?:open|launch|go\s+to)\s+(chrome|browser|youtube|yt|maps|google maps|play store|spotify|amazon)(?:[\s,]+(?:and\s+)?)(?:search(?:ing)?(?:\s+for)?|look(?:ing)?\s+up|find(?:ing)?)\s+(.+)""",
             RegexOption.IGNORE_CASE
         ).find(raw)
         if (openAndSearchMatch != null && GenUiToolRegistry.TOOL_APP_LAUNCHER in enabledToolIds) {
             val appTarget = openAndSearchMatch.groupValues[1].trim()
             val remainder = openAndSearchMatch.groupValues[2].trim()
-            val firstSplit = remainder.split(Regex("""\s+(?:and\s+then|then|->|→)\s+|;\s*""", RegexOption.IGNORE_CASE))
-            val searchQuery = firstSplit.first().trim()
+            val (searchQuery, tailPrompt) = splitSearchQueryAndTrailingActions(remainder)
+            // Single atomic searchInApp opens Chrome/YouTube directly to search results without double-launch flicker
             val chain = mutableListOf(
-                ChatToolInvocation(
-                    tool = "openApp",
-                    args = buildJsonObject { put("appName", JsonPrimitive(appTarget)) }
-                ),
                 ChatToolInvocation(
                     tool = "searchInApp",
                     args = buildJsonObject {
-                        put("appName", JsonPrimitive("\$lastOpenedApp"))
+                        put("appName", JsonPrimitive(appTarget))
                         put("query", JsonPrimitive(searchQuery))
                     }
                 )
             )
-            if (firstSplit.size > 1) {
-                val tailPrompt = firstSplit.drop(1).joinToString(" then ")
+            if (!tailPrompt.isNullOrBlank()) {
                 chain.addAll(planFallbackChainIfUnverified(tailPrompt, enabledToolIds))
             }
             return chain
         }
 
-        // Split multi-step prompts on arrows (->, →), "and then", "then", "after that", "and", ";"
+        // Split multi-step prompts on arrows (->, →), commas (including ",,"), "and then", "then", "after that", "and", ";"
         val clauses = raw
-            .split(Regex("""\s*(?:->|→)\s*|\s+(?:and\s+then|after\s+that|then|and)\s+|\s*;\s*""", RegexOption.IGNORE_CASE))
-            .map { it.trim() }
+            .replace(Regex(",{2,}"), ",")
+            .split(
+                Regex(
+                    """\s*(?:->|→)\s*|\s*,\s*(?:and\s+)?|\s+(?:and\s+then|after\s+that|then)\s+|\s+and\s+(?=(?:take|taking|capture|capturing|screenshot|ocr|extract|read|save|saving|copy|copying|write|paste|pasting|clear|share|sharing|send|open|launch|search|searching|google|call|dial|listen|speak|set|start|pause|stop|add|create|delete|list|show|toggle|turn|navigate)\b)|\s*;\s*""",
+                    RegexOption.IGNORE_CASE
+                )
+            )
+            .map { it.trim().trimStart(',', ';').trim() }
             .filter { it.isNotBlank() }
 
         val planned = mutableListOf<ChatToolInvocation>()
         var hasScreenshotStep = false
         var hasOcrStep = false
+        var hasClipboardReadStep = false
         var lastMentionedApp: String? = null
         var lastDialedNum: String? = null
 
         for (clause in clauses) {
             val lower = clause.lowercase(Locale.US)
+
+            // 0. System Clipboard Manager operations (read / write / clear / paste)
+            if (GenUiToolRegistry.TOOL_CLIPBOARD in enabledToolIds &&
+                (lower.contains("clipboard") || lower.contains("copy to clip") ||
+                    Regex("""^copy\s+(.+)""", RegexOption.IGNORE_CASE).containsMatchIn(clause) ||
+                    (lower.contains("paste") && (lower.contains("screen") || lower.contains("field") || lower.contains("input") || lower.contains("it") || lower.contains("clipboard"))))
+            ) {
+                when {
+                    lower.contains("clear") || lower.contains("empty") || lower.contains("wipe") -> {
+                        planned.add(ChatToolInvocation("clearClipboard", JsonObject(emptyMap())))
+                        continue
+                    }
+                    lower.contains("paste") -> {
+                        planned.add(
+                            ChatToolInvocation(
+                                tool = "pasteToScreen",
+                                args = buildJsonObject {
+                                    if (hasClipboardReadStep) put("text", JsonPrimitive("\$lastClipboardText"))
+                                }
+                            )
+                        )
+                        continue
+                    }
+                    lower.contains("read") || lower.contains("what") || lower.contains("check") ||
+                        lower.contains("get") || lower.contains("show") || lower.contains("inspect") -> {
+                        planned.add(ChatToolInvocation("readClipboard", JsonObject(emptyMap())))
+                        hasClipboardReadStep = true
+                        continue
+                    }
+                    else -> {
+                        val explicitCopy = Regex(
+                            """(?:copy|write|put|set)\s+(?:this\s+|text\s+)?(.+?)(?:\s+(?:to|into|in)\s+(?:my\s+|the\s+)?clipboard|$)""",
+                            RegexOption.IGNORE_CASE
+                        ).find(clause)?.groupValues?.get(1)?.trim()
+                        val copyText = when {
+                            hasOcrStep && (explicitCopy.isNullOrBlank() || explicitCopy.equals("it", true) || explicitCopy.equals("that", true)) -> "\$lastExtractedText"
+                            !explicitCopy.isNullOrBlank() -> explicitCopy.trim('"', '\'')
+                            else -> "\$lastExtractedText"
+                        }
+                        planned.add(
+                            ChatToolInvocation(
+                                tool = "writeClipboard",
+                                args = buildJsonObject {
+                                    put("text", JsonPrimitive(copyText))
+                                    put("label", JsonPrimitive("Mote AI"))
+                                }
+                            )
+                        )
+                        continue
+                    }
+                }
+            }
 
             // 1. Screenshot / Screen Capture
             if (GenUiToolRegistry.TOOL_SCREEN_CAPTURE in enabledToolIds &&
@@ -511,14 +624,38 @@ class SequentialToolOrchestrator(
                     else -> {
                         val explicitBody = Regex("""(?:save|add|create|write)\s+(?:a\s+)?note(?:\s+(?:saying|with|about|called|:))?\s+(.+)""", RegexOption.IGNORE_CASE)
                             .find(clause)?.groupValues?.get(1)?.trim()
+                        val useClipboardContent = hasClipboardReadStep && !hasOcrStep
                         val useOcrContent = hasOcrStep || explicitBody.isNullOrBlank() || lower.contains("to notes") || lower.contains("to my notes")
+                        val resolvedContent = when {
+                            useClipboardContent -> "\$lastClipboardText"
+                            useOcrContent -> "\$lastExtractedText"
+                            else -> explicitBody!!
+                        }
                         planned.add(
                             ChatToolInvocation(
                                 tool = "saveNote",
                                 args = buildJsonObject {
-                                    put("title", JsonPrimitive(if (hasOcrStep) "Screenshot OCR Note" else "Quick Note"))
-                                    put("content", JsonPrimitive(if (useOcrContent) "\$lastExtractedText" else explicitBody!!))
-                                    put("source", JsonPrimitive(if (hasOcrStep) "Screenshot -> OCR Chain" else "Mote Voice/Chat"))
+                                    put(
+                                        "title",
+                                        JsonPrimitive(
+                                            when {
+                                                hasOcrStep -> "Screenshot OCR Note"
+                                                useClipboardContent -> "Clipboard Note"
+                                                else -> "Quick Note"
+                                            }
+                                        )
+                                    )
+                                    put("content", JsonPrimitive(resolvedContent))
+                                    put(
+                                        "source",
+                                        JsonPrimitive(
+                                            when {
+                                                hasOcrStep -> "Screenshot -> OCR Chain"
+                                                useClipboardContent -> "Clipboard Chain"
+                                                else -> "Mote Voice/Chat"
+                                            }
+                                        )
+                                    )
                                 }
                             )
                         )
@@ -605,10 +742,21 @@ class SequentialToolOrchestrator(
             }
 
             // 7. Search in Chrome / YouTube / Web (works standalone OR chained after "open Chrome")
-            val searchMatch = Regex("""(?:search(?:\s+for)?|google|look\s+up)\s+(.+)""", RegexOption.IGNORE_CASE).find(clause)
+            val searchMatch = Regex("""(?:search(?:ing)?(?:\s+for)?|google|look(?:ing)?\s+up)\s+(.+)""", RegexOption.IGNORE_CASE).find(clause)
             if (searchMatch != null && (GenUiToolRegistry.TOOL_APP_LAUNCHER in enabledToolIds || GenUiToolRegistry.TOOL_NAVIGATION in enabledToolIds)) {
-                val query = searchMatch.groupValues[1].trim()
+                val rawQuery = searchMatch.groupValues[1].trim()
+                val query = if (hasClipboardReadStep && (rawQuery.equals("it", true) || rawQuery.contains("clipboard", true))) {
+                    "\$lastClipboardText"
+                } else {
+                    rawQuery
+                }
                 val targetApp = lastMentionedApp ?: "Chrome"
+                // Collapse redundant preceding openApp(targetApp) so Chrome/YouTube launches straight to results without double-launch flicker
+                if (planned.lastOrNull()?.tool.equals("openApp", ignoreCase = true) &&
+                    planned.lastOrNull()?.args?.get("appName")?.jsonPrimitive?.contentOrNull.equals(targetApp, ignoreCase = true)
+                ) {
+                    planned.removeAt(planned.lastIndex)
+                }
                 planned.add(
                     ChatToolInvocation(
                         tool = "searchInApp",
@@ -828,18 +976,40 @@ class SequentialToolOrchestrator(
             }
         }
 
-        // Pipe OCR extracted text -> Save to Notes (hydrated via Room ToolChainState)
+        // Pipe OCR extracted text OR clipboard text -> Save to Notes (hydrated via Room ToolChainState)
         if (op in setOf("savenote", "savetonotes", "save_note", "save_to_notes", "createnote", "addnote")) {
             val rawContent = invocation.args["content"]?.jsonPrimitive?.contentOrNull
                 ?: invocation.args["text"]?.jsonPrimitive?.contentOrNull
+            if (rawContent?.contains("\$lastClipboardText") == true) {
+                val persistedClip = stateManager.resolveDependency(chainId, ToolChainStateManager.KEY_LAST_CLIPBOARD_TEXT)
+                val clipText = context.lastClipboardText ?: persistedClip?.outputValue
+                if (clipText.isNullOrBlank()) {
+                    return Triple(
+                        invocation,
+                        null,
+                        "Skipped Save to Notes — system clipboard did not contain readable text."
+                    )
+                }
+                persistedClip?.let { stateManager.markConsumed(it.stateId, stepIndex) }
+                val merged = buildJsonObject {
+                    invocation.args.forEach { (k, v) -> put(k, v) }
+                    put("content", JsonPrimitive(clipText))
+                }
+                return Triple(
+                    invocation.copy(args = merged),
+                    "Room state piped: lastClipboardText (${clipText.length} chars)",
+                    null
+                )
+            }
             if (rawContent.isNullOrBlank() || rawContent.contains("\$lastExtractedText")) {
                 val persistedText = stateManager.resolveDependency(chainId, ToolChainStateManager.KEY_LAST_EXTRACTED_TEXT)
-                val extracted = context.lastExtractedText ?: persistedText?.outputValue
+                val persistedClip = stateManager.resolveDependency(chainId, ToolChainStateManager.KEY_LAST_CLIPBOARD_TEXT)
+                val extracted = context.lastExtractedText ?: persistedText?.outputValue ?: context.lastClipboardText ?: persistedClip?.outputValue
                 if (extracted.isNullOrBlank()) {
                     return Triple(
                         invocation,
                         null,
-                        "Skipped Save to Notes — dependent OCR analysis step did not produce extracted text."
+                        "Skipped Save to Notes — dependent OCR/clipboard step did not produce text."
                     )
                 }
                 persistedText?.let { stateManager.markConsumed(it.stateId, stepIndex) }
@@ -855,7 +1025,36 @@ class SequentialToolOrchestrator(
             }
         }
 
-        // Pipe screenshot URI / OCR text -> Share to App (hydrated via Room ToolChainState)
+        // Pipe OCR / Clipboard text -> writeClipboard / pasteToScreen
+        if (op in setOf("writeclipboard", "copytoclipboard", "setclipboard", "clipboardwrite", "copytext", "pastetoscreen", "pastetext", "pastefocused")) {
+            val rawText = invocation.args["text"]?.jsonPrimitive?.contentOrNull
+                ?: invocation.args["content"]?.jsonPrimitive?.contentOrNull
+            if (rawText.isNullOrBlank() || rawText.startsWith("$")) {
+                val prefersClipboard = rawText?.contains("Clipboard", ignoreCase = true) == true || op.startsWith("paste")
+                val resolved = if (prefersClipboard) {
+                    val row = stateManager.resolveDependency(chainId, ToolChainStateManager.KEY_LAST_CLIPBOARD_TEXT)
+                    row?.let { stateManager.markConsumed(it.stateId, stepIndex) }
+                    context.lastClipboardText ?: row?.outputValue
+                } else {
+                    val row = stateManager.resolveDependency(chainId, ToolChainStateManager.KEY_LAST_EXTRACTED_TEXT)
+                    row?.let { stateManager.markConsumed(it.stateId, stepIndex) }
+                    context.lastExtractedText ?: row?.outputValue ?: context.lastClipboardText
+                }
+                if (!resolved.isNullOrBlank()) {
+                    val merged = buildJsonObject {
+                        invocation.args.forEach { (k, v) -> put(k, v) }
+                        put("text", JsonPrimitive(resolved))
+                    }
+                    return Triple(
+                        invocation.copy(args = merged),
+                        "Room state piped: ${if (prefersClipboard) "lastClipboardText" else "lastExtractedText"} (${resolved.length} chars)",
+                        null
+                    )
+                }
+            }
+        }
+
+        // Pipe screenshot URI / OCR text / Clipboard text -> Share to App (hydrated via Room ToolChainState)
         if (op in setOf("sharetoapp", "sharecontent", "share_screenshot", "sharescreenshot")) {
             val explicitUri = invocation.args["mediaUri"]?.jsonPrimitive?.contentOrNull
                 ?: invocation.args["uri"]?.jsonPrimitive?.contentOrNull
@@ -879,6 +1078,8 @@ class SequentialToolOrchestrator(
                     val rawText = invocation.args["text"]?.jsonPrimitive?.contentOrNull
                     if (rawText == "\$lastExtractedText" && !context.lastExtractedText.isNullOrBlank()) {
                         put("text", JsonPrimitive(context.lastExtractedText!!))
+                    } else if (rawText == "\$lastClipboardText" && !context.lastClipboardText.isNullOrBlank()) {
+                        put("text", JsonPrimitive(context.lastClipboardText!!))
                     }
                 }
                 return Triple(
@@ -889,20 +1090,38 @@ class SequentialToolOrchestrator(
             }
         }
 
-        // Pipe opened app -> searchInApp (e.g., Step 1 openApp('Chrome') -> Step 2 searchInApp('$lastOpenedApp', query))
+        // Pipe opened app AND/OR clipboard query -> searchInApp
         if (op in setOf("searchinapp", "searchchrome", "openchromeandsearch", "searchyoutube")) {
             val appArg = invocation.args["appName"]?.jsonPrimitive?.contentOrNull
+            val queryArg = invocation.args["query"]?.jsonPrimitive?.contentOrNull
             val persistedApp = stateManager.resolveDependency(chainId, ToolChainStateManager.KEY_LAST_OPENED_APP)
             val resolvedApp = context.lastOpenedApp ?: persistedApp?.outputValue
-            if ((appArg.isNullOrBlank() || appArg.startsWith("$")) && !resolvedApp.isNullOrBlank()) {
-                persistedApp?.let { stateManager.markConsumed(it.stateId, stepIndex) }
+            val needsApp = (appArg.isNullOrBlank() || appArg.startsWith("$")) && !resolvedApp.isNullOrBlank()
+            val needsClipQuery = queryArg?.contains("\$lastClipboardText") == true
+            if (needsApp || needsClipQuery) {
+                val notes = mutableListOf<String>()
+                var resolvedClip: String? = null
+                if (needsClipQuery) {
+                    val clipRow = stateManager.resolveDependency(chainId, ToolChainStateManager.KEY_LAST_CLIPBOARD_TEXT)
+                    resolvedClip = context.lastClipboardText ?: clipRow?.outputValue
+                    if (resolvedClip.isNullOrBlank()) {
+                        return Triple(invocation, null, "Skipped search — clipboard had no text to search.")
+                    }
+                    clipRow?.let { stateManager.markConsumed(it.stateId, stepIndex) }
+                    notes.add("lastClipboardText")
+                }
+                if (needsApp) {
+                    persistedApp?.let { stateManager.markConsumed(it.stateId, stepIndex) }
+                    notes.add("lastOpenedApp=$resolvedApp")
+                }
                 val merged = buildJsonObject {
                     invocation.args.forEach { (k, v) -> put(k, v) }
-                    put("appName", JsonPrimitive(resolvedApp))
+                    if (needsApp && !resolvedApp.isNullOrBlank()) put("appName", JsonPrimitive(resolvedApp))
+                    if (needsClipQuery && !resolvedClip.isNullOrBlank()) put("query", JsonPrimitive(resolvedClip))
                 }
                 return Triple(
                     invocation.copy(args = merged),
-                    "Room state piped: lastOpenedApp=$resolvedApp",
+                    "Room state piped: ${notes.joinToString(", ")}",
                     null
                 )
             }
@@ -1098,9 +1317,27 @@ class SequentialToolOrchestrator(
                     }
                 }
             }
+            is InChatUiPart.ClipboardPanel -> {
+                if (part.success && !part.clipboardText.isNullOrBlank()) {
+                    context.lastClipboardText = part.clipboardText
+                    runCatching {
+                        stateManager.recordStepOutput(
+                            chainId = chainId,
+                            stepIndex = stepIndex,
+                            toolName = result.operation,
+                            outputKey = ToolChainStateManager.KEY_LAST_CLIPBOARD_TEXT,
+                            outputValue = part.clipboardText,
+                            dependencyKey = dependencyKey
+                        )
+                    }
+                }
+            }
             is InChatUiPart.DeviceActionPanel -> {
                 if (part.success && part.category.equals("APPS", ignoreCase = true)) {
-                    val launchedApp = part.title.removePrefix("Opened ").trim()
+                    val launchedApp = part.title
+                        .removePrefix("Opened ")
+                        .removePrefix("Searched ")
+                        .trim()
                     if (launchedApp.isNotBlank()) {
                         context.lastOpenedApp = launchedApp
                         runCatching {
@@ -1120,9 +1357,50 @@ class SequentialToolOrchestrator(
         }
     }
 
-    private fun isAppLaunchStep(toolName: String): Boolean {
+    private fun splitSearchQueryAndTrailingActions(remainder: String): Pair<String, String?> {
+        // First check explicit separators: "->", ";", "and then", "then", or comma before another action
+        val explicitMatch = Regex(
+            """(.*?)(?:\s*(?:->|→|;)\s*|\s+(?:and\s+then|after\s+that|then)\s+|\s*,+\s*(?:and\s+)?|\s+and\s+(?=(?:take|taking|capture|capturing|screenshot|ocr|extract|read|save|saving|copy|copying|paste|share|sharing|send|open|launch|call|dial|set|start)\b))(.+)""",
+            RegexOption.IGNORE_CASE
+        ).find(remainder)
+        return if (explicitMatch != null) {
+            val q = explicitMatch.groupValues[1].trim().trimEnd(',', ';').trim()
+            val tail = explicitMatch.groupValues[2].trim()
+            (q.ifBlank { remainder.trim() }) to tail.takeIf { it.isNotBlank() }
+        } else {
+            remainder.trim() to null
+        }
+    }
+
+    private fun isExternalAppTransitionStep(toolName: String): Boolean {
         val op = toolName.lowercase(Locale.US)
-        return op in setOf("openapp", "launchapp", "startapp", "dialphone", "callnumber")
+        return op in setOf(
+            "openapp", "launchapp", "startapp", "app_open", "navigateapp", "open_application",
+            "searchinapp", "searchchrome", "openchromeandsearch", "searchyoutube", "chrome_search",
+            "searchweb", "websearch", "openurl", "openwebsite", "browse",
+            "navigatemaps", "directions", "openmaps",
+            "dialphone", "callnumber", "callphone", "openphone", "dial",
+            "opencamera", "camera", "launchcamera", "takephoto", "openvideocamera",
+            "openrecentapp", "switchlastapp"
+        )
+    }
+
+    private fun isWebSearchOrUrlStep(toolName: String): Boolean {
+        val op = toolName.lowercase(Locale.US)
+        return op in setOf(
+            "searchinapp", "searchchrome", "openchromeandsearch", "searchyoutube", "chrome_search",
+            "searchweb", "websearch", "openurl", "openwebsite", "browse"
+        )
+    }
+
+    private fun isScreenCaptureStep(toolName: String): Boolean {
+        val op = toolName.lowercase(Locale.US)
+        return op in setOf(
+            "takescreenshot", "screenshot", "capturescreen", "screen_capture",
+            "captureandanalyzescreen", "analyzescreen", "capturescreenforanalysis",
+            "capturescreencontext", "readscreen", "screen_context",
+            "ocranalysis", "ocr", "extracttext", "extract_text"
+        )
     }
 
     private fun formatOperationLabel(inv: ChatToolInvocation): String {
@@ -1140,6 +1418,7 @@ class SequentialToolOrchestrator(
     private fun resolveEngineLabel(tool: String): String {
         val op = tool.lowercase(Locale.US)
         return when {
+            op.contains("clipboard") || op.contains("paste") || op.contains("copy") -> "Android ClipboardManager"
             op.contains("alarm") -> "Android AlarmManager"
             op.contains("timer") -> "Live Countdown Engine"
             op.contains("stopwatch") -> "Live Stopwatch Engine"
@@ -1148,7 +1427,7 @@ class SequentialToolOrchestrator(
             op.contains("note") -> "Mote Notes Room DB"
             op.contains("dial") || op.contains("call") && !op.contains("relay") -> "Android ACTION_DIAL"
             op.contains("relay") || op.contains("speak") || op.contains("tts") -> "Google STT ↔ AI ↔ TTS"
-            op.contains("screenshot") || op.contains("screen") -> "MediaProjection API"
+            op.contains("screenshot") || op.contains("screen") -> "MediaProjection / Display Capture"
             op.contains("share") -> "Android ACTION_SEND"
             op.contains("search") -> "Chrome / App Search + Overlay"
             op.contains("recentapp") || op.contains("usagestats") -> "UsageStatsManager"

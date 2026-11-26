@@ -689,6 +689,8 @@ class MoteViewModel(
                     appendLine()
                     appendLine(localModelManager.notesTools.buildNotesContextForAi())
                     appendLine()
+                    appendLine(localModelManager.clipboardTools.buildClipboardContextForAi())
+                    appendLine()
                     appendLine(localModelManager.deviceTools.buildDeviceContextForAi())
                 }.trim()
                 val enabledToolIds = localModelManager.toolRegistry.enabledToolIds(studioPrefs.value)
@@ -863,6 +865,7 @@ class MoteViewModel(
                         is InChatUiPart.OcrResultPanel -> firstPart.title
                         is InChatUiPart.NotesPanel -> firstPart.actionSummary
                         is InChatUiPart.VoiceCallRelayPanel -> firstPart.summary
+                        is InChatUiPart.ClipboardPanel -> firstPart.summary
                         is InChatUiPart.GenUiCardPart -> firstPart.spec.title
                         is InChatUiPart.ToolStatusBanner -> firstPart.message
                         null -> ""
@@ -1038,6 +1041,20 @@ class MoteViewModel(
                 content = content,
                 sourceTag = "OCR Quick Save"
             )
+            _utilityStatus.value = res.summary
+        }
+    }
+
+    fun writeToSystemClipboard(text: String) {
+        viewModelScope.launch {
+            val res = localModelManager.clipboardTools.writeClipboard(text)
+            _utilityStatus.value = res.summary
+        }
+    }
+
+    fun pasteClipboardToFocusedField(text: String) {
+        viewModelScope.launch {
+            val res = localModelManager.clipboardTools.pasteToFocusedField(text)
             _utilityStatus.value = res.summary
         }
     }

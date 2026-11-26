@@ -82,6 +82,36 @@ object MediaProjectionConsentBridge {
     }
 
     /**
+     * Pre-authorizes and caches a MediaProjection consent token while Mote is still in the foreground,
+     * WITHOUT consuming it yet. Used by [com.mote.app.ai.SequentialToolOrchestrator] before launching
+     * an external app (e.g., Chrome) when a downstream step in the same chain needs `takeScreenshot`.
+     */
+    suspend fun preAuthorizeIfNeeded(context: Context): Boolean {
+        if (cachedToken != null) return true
+        val requester = consentRequester ?: return false
+        val mpm = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
+            ?: return false
+        val captureIntent = mpm.createScreenCaptureIntent()
+
+        val deferred = CompletableDeferred<Boolean>()
+        mainHandler.post {
+            try {
+                requester(captureIntent) { resultCode, data ->
+                    if (resultCode == Activity.RESULT_OK && data != null) {
+                        storeConsent(resultCode, data)
+                        deferred.complete(true)
+                    } else {
+                        deferred.complete(false)
+                    }
+                }
+            } catch (_: Exception) {
+                deferred.complete(false)
+            }
+        }
+        return withTimeoutOrNull(45_000L) { deferred.await() } ?: false
+    }
+
+    /**
      * Consumes a pre-authorized MediaProjection token if present, or launches the system
      * MediaProjection consent dialog via the attached foreground Activity and awaits
      * the user's explicit authorization decision.

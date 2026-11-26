@@ -190,7 +190,17 @@ internal fun SystemAssistantOverlayContent(
                 isExecuting = hudState.isExecutingChain,
                 allVerified = hudState.allVerified,
                 onTap = { onLaunchBot(systemOverlayBots.first()) },
-                onDismiss = { SystemOverlayStateBus.clearBanner() }
+                onDismiss = { SystemOverlayStateBus.clearBanner() },
+                onDragStart = {
+                    isDragging = true
+                    dockExpanded = false
+                    onDragStart()
+                },
+                onDragDelta = onDragDelta,
+                onDragEnd = {
+                    isDragging = false
+                    onDragEnd()
+                }
             )
         }
 
@@ -211,6 +221,16 @@ internal fun SystemAssistantOverlayContent(
                     onTapVoice = {
                         dockExpanded = false
                         onLaunchBot(systemOverlayBots.first { it.id == "voice_relay" })
+                    },
+                    onDragStart = {
+                        isDragging = true
+                        dockExpanded = false
+                        onDragStart()
+                    },
+                    onDragDelta = onDragDelta,
+                    onDragEnd = {
+                        isDragging = false
+                        onDragEnd()
                     }
                 )
                 systemOverlayBots.forEach { bot ->
@@ -249,10 +269,11 @@ internal fun SystemAssistantOverlayContent(
             }
         }
 
-        // 4. Lottie-Powered Siri-Style Animated Voice Orb (draggable + edge-snapping)
+        // 4. Lottie-Powered Siri-Style Animated Voice Orb (free-position draggable anywhere on screen)
         LottieSystemVoiceOrb(
             hostBadgeLabel = hostBadgeLabel,
             isActive = isSiriActive,
+            isDragging = isDragging,
             isExecuting = hudState.isExecutingChain,
             allVerified = hudState.allVerified && !hudState.isExecutingChain,
             rmsLevel = liveRms,
@@ -283,7 +304,10 @@ private fun SystemOverlayLottieVoiceBar(
     hostBadgeLabel: String,
     rmsLevel: Float,
     isExecuting: Boolean,
-    onTapVoice: () -> Unit
+    onTapVoice: () -> Unit,
+    onDragStart: () -> Unit = {},
+    onDragDelta: (Float, Float) -> Unit = { _, _ -> },
+    onDragEnd: () -> Unit = {}
 ) {
     val composition by rememberLottieComposition(
         LottieCompositionSpec.RawRes(R.raw.voice_waveform_lottie)
@@ -303,6 +327,17 @@ private fun SystemOverlayLottieVoiceBar(
             .clip(RoundedCornerShape(16.dp))
             .background(Color(0xF50B1024))
             .border(1.2.dp, Color(0xFF38BDF8), RoundedCornerShape(16.dp))
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { onDragStart() },
+                    onDragEnd = { onDragEnd() },
+                    onDragCancel = { onDragEnd() },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        onDragDelta(dragAmount.x, dragAmount.y)
+                    }
+                )
+            }
             .clickable(onClick = onTapVoice)
             .padding(horizontal = 10.dp, vertical = 7.dp)
             .testTag("system_overlay_lottie_voice_bar"),
@@ -326,9 +361,9 @@ private fun SystemOverlayLottieVoiceBar(
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = "$hostBadgeLabel · Tap to speak",
+                text = "$hostBadgeLabel · Drag to move · Tap to speak",
                 color = Color(0xFF7DD3FC),
-                fontSize = 9.5.sp,
+                fontSize = 9.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -341,6 +376,7 @@ private fun SystemOverlayLottieVoiceBar(
 private fun LottieSystemVoiceOrb(
     hostBadgeLabel: String,
     isActive: Boolean,
+    isDragging: Boolean,
     isExecuting: Boolean,
     allVerified: Boolean,
     rmsLevel: Float,
@@ -354,7 +390,7 @@ private fun LottieSystemVoiceOrb(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isExecuting) 1600 else 3600, easing = LinearEasing),
+            animation = tween(durationMillis = if (isExecuting || isDragging) 1400 else 3600, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "siriSpin"
@@ -369,15 +405,20 @@ private fun LottieSystemVoiceOrb(
         label = "siriWave"
     )
     val smoothRms by animateFloatAsState(
-        targetValue = rmsLevel.coerceIn(0.10f, 1f),
+        targetValue = if (isDragging) 0.85f else rmsLevel.coerceIn(0.10f, 1f),
         animationSpec = tween(110),
         label = "siriRms"
+    )
+    val dragScale by animateFloatAsState(
+        targetValue = if (isDragging) 1.12f else 1f,
+        animationSpec = tween(130),
+        label = "orbDragScale"
     )
 
     val lottieComposition by rememberLottieComposition(
         LottieCompositionSpec.RawRes(R.raw.voice_waveform_lottie)
     )
-    val lottieSpeed = if (isActive || isExecuting) {
+    val lottieSpeed = if (isActive || isExecuting || isDragging) {
         (0.85f + smoothRms * 2.2f).coerceIn(0.85f, 3.0f)
     } else {
         0.55f
@@ -391,7 +432,11 @@ private fun LottieSystemVoiceOrb(
 
     Box(
         modifier = Modifier
-            .size(70.dp)
+            .size(72.dp)
+            .graphicsLayer {
+                scaleX = dragScale
+                scaleY = dragScale
+            }
             .pointerInput(Unit) {
                 detectDragGestures(
                     onDragStart = { onDragStart() },
@@ -415,14 +460,18 @@ private fun LottieSystemVoiceOrb(
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        if (allVerified) Color(0x6610B981) else Color(0x7738BDF8),
-                        Color(0x448B5CF6),
+                        when {
+                            isDragging -> Color(0xAA38BDF8)
+                            allVerified -> Color(0x6610B981)
+                            else -> Color(0x7738BDF8)
+                        },
+                        Color(0x558B5CF6),
                         Color.Transparent
                     ),
                     center = center,
-                    radius = pulseRadius * 1.35f
+                    radius = pulseRadius * 1.38f
                 ),
-                radius = pulseRadius * 1.35f,
+                radius = pulseRadius * 1.38f,
                 center = center
             )
 
@@ -447,7 +496,10 @@ private fun LottieSystemVoiceOrb(
                     ),
                     radius = baseRadius * (1.03f + 0.08f * sin(wavePhase)),
                     center = center,
-                    style = Stroke(width = if (isActive) 4.dp.toPx() else 2.8.dp.toPx(), cap = StrokeCap.Round)
+                    style = Stroke(
+                        width = if (isActive || isDragging) 4.2.dp.toPx() else 2.8.dp.toPx(),
+                        cap = StrokeCap.Round
+                    )
                 )
             }
         }
@@ -458,7 +510,7 @@ private fun LottieSystemVoiceOrb(
                 strokeWidth = 2.4.dp,
                 color = Color(0xFF38BDF8)
             )
-        } else if (allVerified) {
+        } else if (allVerified && !isDragging) {
             Icon(
                 imageVector = Icons.Outlined.CheckCircle,
                 contentDescription = "Execution verified - open Mote AI Overlay",
@@ -479,18 +531,18 @@ private fun LottieSystemVoiceOrb(
             )
         }
 
-        // Tiny host badge ("A11Y" or "WM") anchored neatly at the bottom of the floating orb
+        // Tiny host/move badge ("MOVE" while dragging, otherwise "A11Y" or "WM")
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .clip(RoundedCornerShape(999.dp))
-                .background(Color(0xE60F172A))
-                .border(0.75.dp, Color(0xFF38BDF8).copy(alpha = 0.65f), RoundedCornerShape(999.dp))
+                .background(if (isDragging) Color(0xFF0284C7) else Color(0xE60F172A))
+                .border(0.75.dp, Color(0xFF38BDF8).copy(alpha = 0.8f), RoundedCornerShape(999.dp))
                 .padding(horizontal = 5.dp, vertical = 1.dp)
         ) {
             Text(
-                text = hostBadgeLabel,
-                color = Color(0xFF7DD3FC),
+                text = if (isDragging) "MOVE" else hostBadgeLabel,
+                color = if (isDragging) Color.White else Color(0xFF7DD3FC),
                 fontSize = 7.5.sp,
                 fontWeight = FontWeight.ExtraBold
             )
@@ -504,7 +556,10 @@ private fun SystemChainStatusHudPill(
     isExecuting: Boolean,
     allVerified: Boolean,
     onTap: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onDragStart: () -> Unit = {},
+    onDragDelta: (Float, Float) -> Unit = { _, _ -> },
+    onDragEnd: () -> Unit = {}
 ) {
     Row(
         modifier = Modifier
@@ -521,6 +576,17 @@ private fun SystemChainStatusHudPill(
                 },
                 shape = RoundedCornerShape(16.dp)
             )
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { onDragStart() },
+                    onDragEnd = { onDragEnd() },
+                    onDragCancel = { onDragEnd() },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        onDragDelta(dragAmount.x, dragAmount.y)
+                    }
+                )
+            }
             .clickable(onClick = onTap)
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,

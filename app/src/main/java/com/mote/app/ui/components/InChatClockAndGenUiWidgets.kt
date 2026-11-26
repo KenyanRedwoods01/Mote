@@ -67,7 +67,9 @@ fun InChatUiPartRenderer(
     onSaveOcrToNotes: (title: String, text: String) -> Unit = { _, _ -> },
     onToggleVoiceRelayPause: () -> Unit = {},
     onStopVoiceRelay: () -> Unit = {},
-    onSubmitVoiceRelayText: (String) -> Unit = {}
+    onSubmitVoiceRelayText: (String) -> Unit = {},
+    onCopyClipboardText: (String) -> Unit = {},
+    onPasteClipboardText: (String) -> Unit = {}
 ) {
     when (part) {
         is InChatUiPart.ClockAlarmsPanel -> {
@@ -165,6 +167,13 @@ fun InChatUiPartRenderer(
                 onTogglePause = onToggleVoiceRelayPause,
                 onStop = onStopVoiceRelay,
                 onSubmitHeardText = onSubmitVoiceRelayText
+            )
+        }
+        is InChatUiPart.ClipboardPanel -> {
+            InChatClipboardWidget(
+                part = part,
+                onCopyAgain = onCopyClipboardText,
+                onPasteToScreen = onPasteClipboardText
             )
         }
     }

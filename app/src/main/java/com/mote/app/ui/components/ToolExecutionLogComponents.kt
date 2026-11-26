@@ -1006,6 +1006,147 @@ fun InChatVoiceCallRelayWidget(
     }
 }
 
+/**
+ * Inline Generative UI card for Android ClipboardManager tool operations (read, write, clear, paste).
+ */
+@Composable
+fun InChatClipboardWidget(
+    part: InChatUiPart.ClipboardPanel,
+    onCopyAgain: (String) -> Unit,
+    onPasteToScreen: (String) -> Unit
+) {
+    val context = LocalContext.current
+    val tokens = LocalMoteColors.current
+    val accent = Color(0xFF0EA5E9)
+
+    MoteCard(
+        background = tokens.surface,
+        modifier = Modifier
+            .border(
+                width = 1.dp,
+                color = if (part.success) accent.copy(alpha = 0.45f) else Color(0xFFDC2626).copy(alpha = 0.4f),
+                shape = RoundedCornerShape(16.dp)
+            )
+            .testTag("inchat_clipboard_widget")
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(accent.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.ContentPaste,
+                    contentDescription = "System Clipboard Manager",
+                    tint = if (part.success) accent else Color(0xFFDC2626),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "CLIPBOARD MANAGER",
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = accent
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(if (part.success) Color(0xFFDCFCE7) else Color(0xFFFEE2E2))
+                            .padding(horizontal = 6.dp, vertical = 1.5.dp)
+                    ) {
+                        Text(
+                            text = part.badge,
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (part.success) Color(0xFF15803D) else Color(0xFFB91C1C)
+                        )
+                    }
+                }
+                Text(part.title, fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = MoteNavy)
+                Text(part.summary, fontSize = 11.5.sp, color = SlateMuted, lineHeight = 16.sp)
+            }
+        }
+
+        val textBody = part.clipboardText?.takeIf { it.isNotBlank() }
+        if (textBody != null) {
+            Spacer(Modifier.height(8.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MoteSurfaceSubtle)
+                    .border(0.5.dp, MoteBorder, RoundedCornerShape(10.dp))
+                    .padding(10.dp)
+            ) {
+                Text(
+                    text = textBody,
+                    fontSize = 11.5.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = MoteNavy,
+                    lineHeight = 16.sp,
+                    maxLines = 8,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        onCopyAgain(textBody)
+                        Toast.makeText(context, "Copied to system clipboard", Toast.LENGTH_SHORT).show()
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .testTag("inchat_clipboard_copy_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.ContentCopy,
+                        contentDescription = "Copy text to clipboard",
+                        tint = MoteNavy,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text("Copy", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MoteNavy)
+                }
+                Button(
+                    onClick = { onPasteToScreen(textBody) },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = accent),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .testTag("inchat_clipboard_paste_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.ContentPasteGo,
+                        contentDescription = "Paste into focused field",
+                        tint = Color.White,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text("Paste Live", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            }
+        }
+    }
+}
+
 private fun formatExecutionLogTimestamp(epochMs: Long): String {
     return try {
         SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(epochMs))

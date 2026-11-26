@@ -119,9 +119,14 @@ private val starterPrompts = listOf(
         prompt = "Take a screenshot -> OCR analysis -> Save to Notes"
     ),
     StarterPrompt(
-        title = "Open Chrome & Search",
-        subtitle = "Launches Chrome search with live animated Siri system overlay",
-        prompt = "Open Chrome and search latest Android AI news"
+        title = "Chrome → Search → Screenshot",
+        subtitle = "Pre-authorizes capture, opens Chrome search, waits for render & snaps screen",
+        prompt = "Open Chrome, search latest Android AI news, and take a screenshot"
+    ),
+    StarterPrompt(
+        title = "Clipboard → Save to Notes",
+        subtitle = "Reads Android system clipboard and pipes text directly into Room Notes",
+        prompt = "Read my clipboard and save it to Notes"
     ),
     StarterPrompt(
         title = "Phone + Live STT/TTS Relay",
@@ -641,7 +646,9 @@ fun ChatHubScreen(
                             onSaveOcrToNotes = { title, text -> viewModel.saveOcrTextAsNote(title, text) },
                             onToggleVoiceRelayPause = { viewModel.toggleVoiceRelayPause() },
                             onStopVoiceRelay = { viewModel.stopVoiceRelay() },
-                            onSubmitVoiceRelayText = { heard -> viewModel.submitVoiceRelayUtterance(heard) }
+                            onSubmitVoiceRelayText = { heard -> viewModel.submitVoiceRelayUtterance(heard) },
+                            onCopyClipboardText = { txt -> viewModel.writeToSystemClipboard(txt) },
+                            onPasteClipboardText = { txt -> viewModel.pasteClipboardToFocusedField(txt) }
                         )
                     }
                 }
@@ -684,7 +691,9 @@ fun ChatHubScreen(
                                 onSaveOcrToNotes = { title, text -> viewModel.saveOcrTextAsNote(title, text) },
                                 onToggleVoiceRelayPause = { viewModel.toggleVoiceRelayPause() },
                                 onStopVoiceRelay = { viewModel.stopVoiceRelay() },
-                                onSubmitVoiceRelayText = { heard -> viewModel.submitVoiceRelayUtterance(heard) }
+                                onSubmitVoiceRelayText = { heard -> viewModel.submitVoiceRelayUtterance(heard) },
+                                onCopyClipboardText = { txt -> viewModel.writeToSystemClipboard(txt) },
+                                onPasteClipboardText = { txt -> viewModel.pasteClipboardToFocusedField(txt) }
                             )
                         }
                     }

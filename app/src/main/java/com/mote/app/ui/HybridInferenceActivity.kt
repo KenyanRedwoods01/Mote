@@ -173,6 +173,7 @@ class HybridInferenceActivity : ComponentActivity() {
                                 appendLine(localModelManager.clockTools.buildClockContextForAi())
                                 appendLine(localModelManager.calendarTools.buildCalendarContextForAi())
                                 appendLine(localModelManager.notesTools.buildNotesContextForAi())
+                                appendLine(localModelManager.clipboardTools.buildClipboardContextForAi())
                                 appendLine(localModelManager.deviceTools.buildDeviceContextForAi())
                                 if (!screenContext.isNullOrBlank()) {
                                     appendLine("REDACTED SCREEN CONTEXT: $screenContext")
@@ -598,7 +599,13 @@ class HybridInferenceActivity : ComponentActivity() {
                                     },
                                     onToggleVoiceRelayPause = { localModelManager.voiceCallBridge.togglePause() },
                                     onStopVoiceRelay = { localModelManager.voiceCallBridge.stopRelay() },
-                                    onSubmitVoiceRelayText = { heard -> localModelManager.voiceCallBridge.submitHeardUtterance(heard) }
+                                    onSubmitVoiceRelayText = { heard -> localModelManager.voiceCallBridge.submitHeardUtterance(heard) },
+                                    onCopyClipboardText = { text ->
+                                        scope.launch { localModelManager.clipboardTools.writeClipboard(text) }
+                                    },
+                                    onPasteClipboardText = { text ->
+                                        scope.launch { localModelManager.clipboardTools.pasteToFocusedField(text) }
+                                    }
                                 )
                             }
 

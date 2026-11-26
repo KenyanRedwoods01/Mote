@@ -5,6 +5,7 @@ import com.mote.app.ai.ChatGenUiToolProtocol.intVal
 import com.mote.app.ai.ChatGenUiToolProtocol.str
 import com.mote.app.ai.ChatGenUiToolProtocol.strList
 import com.mote.app.control.CalendarToolsManager
+import com.mote.app.control.ClipboardToolsManager
 import com.mote.app.control.ClockToolsManager
 import com.mote.app.control.LiveVoiceCallBridge
 import com.mote.app.control.NotesToolsManager
@@ -1064,8 +1065,69 @@ class DeviceNavigationTool(
 }
 
 /**
+ * System Clipboard Manager Tool backed by Android's [android.content.ClipboardManager]
+ * for seamless bidirectional text transfer between Mote AI context and external apps.
+ */
+class ClipboardManagerTool(
+    private val clipboardTools: ClipboardToolsManager
+) : GenUiTool {
+
+    override val descriptor = RegisteredToolDescriptor(
+        id = GenUiToolRegistry.TOOL_CLIPBOARD,
+        displayName = "System Clipboard Manager",
+        category = "Transfer · ClipboardManager",
+        description = "Reads, writes, clears, and pastes text between Mote AI and the Android system clipboard.",
+        operations = listOf("readClipboard", "writeClipboard", "clearClipboard", "pasteToScreen"),
+        requiredPermissionLabels = emptyList()
+    )
+
+    override val supportedOperations: Set<String> = setOf(
+        "readclipboard", "getclipboard", "clipboardread", "pasteclipboard", "inspectclipboard",
+        "writeclipboard", "copytoclipboard", "setclipboard", "clipboardwrite", "copytext",
+        "clearclipboard", "emptyclipboard",
+        "pastetoscreen", "pastetext", "pastefocused"
+    )
+
+    override suspend fun execute(operation: String, args: JsonObject): GenUiToolResult {
+        val op = operation.lowercase(Locale.US)
+        val outcome = when (op) {
+            "readclipboard", "getclipboard", "clipboardread", "pasteclipboard", "inspectclipboard" -> {
+                clipboardTools.readClipboard()
+            }
+            "clearclipboard", "emptyclipboard" -> {
+                clipboardTools.clearClipboard()
+            }
+            "pastetoscreen", "pastetext", "pastefocused" -> {
+                val explicit = args.str("text")?.takeIf { !it.startsWith("$") }
+                clipboardTools.pasteToFocusedField(overrideText = explicit)
+            }
+            else -> {
+                val text = args.str("text") ?: args.str("content") ?: args.str("value").orEmpty()
+                val label = args.str("label") ?: "Mote AI"
+                clipboardTools.writeClipboard(text = text, label = label)
+            }
+        }
+        return GenUiToolResult(
+            toolId = descriptor.id,
+            operation = outcome.operation,
+            success = outcome.success,
+            feedback = outcome.summary,
+            uiPart = InChatUiPart.ClipboardPanel(
+                partId = nextPartId(),
+                title = outcome.title,
+                summary = outcome.summary,
+                clipboardText = outcome.clipboardText,
+                badge = outcome.badge,
+                success = outcome.success
+            ),
+            extractedText = outcome.clipboardText
+        )
+    }
+}
+
+/**
  * Central Generative UI Tool Registry coordinating:
- * - Tool registration (AlarmManager, CountdownTimer, Stopwatch, Calendar, Camera, Screenshot, App Launcher, Navigation, GenUI)
+ * - Tool registration (AlarmManager, CountdownTimer, Stopwatch, Calendar, Camera, Screenshot, App Launcher, Navigation, Clipboard, Notes, Voice Relay, GenUI)
  * - Explicit user authorization enforcement from Room preferences
  * - Room-persisted tool execution logs & aggregated usage statistics
  */
@@ -1075,6 +1137,7 @@ class GenUiToolRegistry(
     private val deviceTools: com.mote.app.control.DeviceAutomationToolsManager,
     private val notesTools: NotesToolsManager,
     private val voiceCallBridge: LiveVoiceCallBridge,
+    private val clipboardTools: ClipboardToolsManager,
     aiRouter: HybridAiRouter,
     private val dao: LocalModelDao,
     private val scope: CoroutineScope,
@@ -1090,6 +1153,7 @@ class GenUiToolRegistry(
     val navigationTool: DeviceNavigationTool = DeviceNavigationTool(deviceTools)
     val notesTool: NotesStorageTool = NotesStorageTool(notesTools)
     val voiceCallTool: VoiceCallRelayTool = VoiceCallRelayTool(deviceTools, voiceCallBridge)
+    val clipboardTool: ClipboardManagerTool = ClipboardManagerTool(clipboardTools)
     val genUiWidgetTool: GenUiWidgetTool = GenUiWidgetTool()
 
     private val tools: List<GenUiTool> = listOf(
@@ -1103,6 +1167,7 @@ class GenUiToolRegistry(
         navigationTool,
         notesTool,
         voiceCallTool,
+        clipboardTool,
         genUiWidgetTool
     )
 
@@ -1148,6 +1213,7 @@ class GenUiToolRegistry(
         if (prefs.toolGenUiEnabled) add(TOOL_GEN_UI_WIDGETS)
         add(TOOL_NOTES)
         add(TOOL_VOICE_CALL)
+        add(TOOL_CLIPBOARD)
     }
 
     /**
@@ -1249,6 +1315,14 @@ class GenUiToolRegistry(
                 } else {
                     BackgroundVerificationResult(true, "Verified Android Phone / TTS engine handoff")
                 }
+            }
+            TOOL_CLIPBOARD -> {
+                val panel = result.uiPart as? InChatUiPart.ClipboardPanel
+                val (verified, detail) = clipboardTools.verifyClipboardState(
+                    operation = result.operation,
+                    expectedText = panel?.clipboardText
+                )
+                BackgroundVerificationResult(verified = verified, detail = detail)
             }
             TOOL_APP_LAUNCHER, TOOL_NAVIGATION -> {
                 val fgPkg = MoteAccessibilityService.currentPackageName
@@ -1363,6 +1437,7 @@ class GenUiToolRegistry(
         const val TOOL_GEN_UI_WIDGETS = "gen_ui_widgets"
         const val TOOL_NOTES = "notes_storage"
         const val TOOL_VOICE_CALL = "voice_call_relay"
+        const val TOOL_CLIPBOARD = "clipboard_manager"
 
         val ALL_TOOL_IDS: Set<String> = setOf(
             TOOL_ALARM_MANAGER,
@@ -1375,7 +1450,8 @@ class GenUiToolRegistry(
             TOOL_NAVIGATION,
             TOOL_GEN_UI_WIDGETS,
             TOOL_NOTES,
-            TOOL_VOICE_CALL
+            TOOL_VOICE_CALL,
+            TOOL_CLIPBOARD
         )
     }
 }

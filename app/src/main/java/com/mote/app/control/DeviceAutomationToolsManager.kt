@@ -213,47 +213,85 @@ class DeviceAutomationToolsManager(context: Context) {
     // -------------------------------------------------------------------------
 
     /**
-     * Captures a live screenshot using the Android MediaProjection API after explicit user
-     * authorization (via cached MediaProjection consent or an immediate system consent dialog).
+     * Captures a live screenshot using Android's MediaProjection API (with pre-authorized or on-demand
+     * consent) or Android 11+ AccessibilityService display capture when Mote is running a multi-app
+     * chain in the background over an external app (such as Chrome search results).
      * Saves the PNG to Pictures/MoteCaptures and surfaces the resulting Bitmap in
      * [capturedScreenshots] for inline chat rendering and multimodal visual analysis.
      */
     suspend fun takeScreenshot(label: String? = null): DeviceToolOutcome {
-        // Explicit MediaProjection user authorization flow
-        val token = MediaProjectionConsentBridge.requestOrConsumeConsent(appContext)
-        if (token == null) {
-            return DeviceToolOutcome(
-                success = false,
-                title = "Screen Capture Authorization Required",
-                summary = "Explicit user authorization via Android's MediaProjection prompt is required before capturing the screen. Tap Grant in Tools & Permissions or allow the prompt when retrying.",
-                badge = "CONSENT REQUIRED"
-            )
-        }
-
-        var capturedBitmap: Bitmap? = ScreenCaptureProjectionService.captureFrame(appContext, token)
+        val isMoteBackgrounded = foregroundActivityRef?.get() == null
+        val accessibility = MoteAccessibilityService.instance
+        var capturedBitmap: Bitmap? = null
         var captureSource = "MediaProjection API"
 
-        // If MediaProjection frame delivery timed out on a headless/restricted display, fall back
-        // only AFTER the user explicitly granted MediaProjection consent above.
-        if (capturedBitmap == null) {
-            val accessibility = MoteAccessibilityService.instance
-            if (accessibility != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                capturedBitmap = suspendCancellableCoroutine { cont ->
-                    accessibility.captureScreenshotBitmap { bmp ->
-                        if (cont.isActive) cont.resume(bmp)
-                    }
-                }
-                if (capturedBitmap != null) {
-                    captureSource = "Authorized Display Capture"
+        // Multi-App Chain Seamless Path:
+        // When Mote has just launched an external app (e.g., Chrome search) so Mote is no longer in
+        // foreground AND no MediaProjection token was pre-cached, capture the live display directly
+        // via user-enabled Android 11+ AccessibilityService.takeScreenshot so the chain never stalls!
+        if (isMoteBackgrounded &&
+            !MediaProjectionConsentBridge.hasCachedConsent() &&
+            accessibility != null &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+        ) {
+            capturedBitmap = suspendCancellableCoroutine { cont ->
+                accessibility.captureScreenshotBitmap { bmp ->
+                    if (cont.isActive) cont.resume(bmp)
                 }
             }
+            if (capturedBitmap != null) {
+                captureSource = "Accessibility Display Capture"
+            }
         }
+
         if (capturedBitmap == null) {
-            val activity = foregroundActivityRef?.get()
-            if (activity != null && !activity.isFinishing && !activity.isDestroyed) {
-                capturedBitmap = captureActivityWindowBitmap(activity)
-                if (capturedBitmap != null) {
-                    captureSource = "Authorized Window Capture"
+            // Explicit MediaProjection user authorization flow (consumes any pre-authorized token cached
+            // before launching Chrome, or requests consent interactively if Mote is foreground)
+            val token = MediaProjectionConsentBridge.requestOrConsumeConsent(appContext)
+            if (token == null) {
+                // Final fallback if Accessibility is active on API 30+ so external-app chains stay resilient
+                if (accessibility != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    capturedBitmap = suspendCancellableCoroutine { cont ->
+                        accessibility.captureScreenshotBitmap { bmp ->
+                            if (cont.isActive) cont.resume(bmp)
+                        }
+                    }
+                    if (capturedBitmap != null) {
+                        captureSource = "Accessibility Display Capture"
+                    }
+                }
+                if (capturedBitmap == null) {
+                    return DeviceToolOutcome(
+                        success = false,
+                        title = "Screen Capture Authorization Required",
+                        summary = "Explicit user authorization via Android's MediaProjection prompt is required before capturing the screen. Tap Grant in Tools & Permissions (or enable Mote Accessibility) before retrying.",
+                        badge = "CONSENT REQUIRED"
+                    )
+                }
+            } else {
+                capturedBitmap = ScreenCaptureProjectionService.captureFrame(appContext, token)
+                captureSource = "MediaProjection API"
+
+                // If MediaProjection frame delivery timed out on a headless/restricted display, fall back
+                // only AFTER the user explicitly granted MediaProjection consent above.
+                if (capturedBitmap == null && accessibility != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    capturedBitmap = suspendCancellableCoroutine { cont ->
+                        accessibility.captureScreenshotBitmap { bmp ->
+                            if (cont.isActive) cont.resume(bmp)
+                        }
+                    }
+                    if (capturedBitmap != null) {
+                        captureSource = "Authorized Display Capture"
+                    }
+                }
+                if (capturedBitmap == null) {
+                    val activity = foregroundActivityRef?.get()
+                    if (activity != null && !activity.isFinishing && !activity.isDestroyed) {
+                        capturedBitmap = captureActivityWindowBitmap(activity)
+                        if (capturedBitmap != null) {
+                            captureSource = "Authorized Window Capture"
+                        }
+                    }
                 }
             }
         }
@@ -262,7 +300,7 @@ class DeviceAutomationToolsManager(context: Context) {
             return DeviceToolOutcome(
                 success = false,
                 title = "Screen Capture Timed Out",
-                summary = "MediaProjection was authorized, but no display frame arrived. Please try again.",
+                summary = "Screen capture was authorized, but no display frame arrived. Please try again.",
                 badge = "CAPTURE TIMEOUT"
             )
         }
@@ -291,9 +329,14 @@ class DeviceAutomationToolsManager(context: Context) {
         } else {
             "Ready in chat for visual analysis."
         }
+        val captureTitle = label?.takeIf { it.isNotBlank() }?.let { "Captured: $it" } ?: "MediaProjection Screenshot"
+        SystemOverlayStateBus.publishAppContext(
+            appLabel = MoteAccessibilityService.currentPackageName?.substringAfterLast('.')?.replaceFirstChar { it.uppercase() } ?: "Screen",
+            statusBanner = "✓ $captureTitle · Saved & ready in Mote"
+        )
         return DeviceToolOutcome(
             success = true,
-            title = label?.takeIf { it.isNotBlank() }?.let { "Captured: $it" } ?: "MediaProjection Screenshot",
+            title = captureTitle,
             summary = "$captureSource (${previewBmp.width}×${previewBmp.height}) · $saveNote",
             badge = captureSource,
             captureId = captureId,
@@ -1016,7 +1059,7 @@ class DeviceAutomationToolsManager(context: Context) {
 
         val targetedIntent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).apply {
             setPackage(targetPkg)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
         val launchedTargeted = try {
             appContext.startActivity(targetedIntent)
@@ -1027,7 +1070,7 @@ class DeviceAutomationToolsManager(context: Context) {
 
         if (!launchedTargeted) {
             val genericIntent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             }
             try {
                 appContext.startActivity(genericIntent)

@@ -67,11 +67,22 @@ class AccessibilityFloatingWindowManager(
             val wm = service.getSystemService(AccessibilityService.WINDOW_SERVICE) as WindowManager
             windowManager = wm
 
+            val prefs = service.getSharedPreferences(
+                BotOverlayService.OVERLAY_PREFS_NAME,
+                AccessibilityService.MODE_PRIVATE
+            )
             val metrics = service.resources.displayMetrics
             val screenWidthPx = metrics.widthPixels
             val screenHeightPx = metrics.heightPixels
-            val edgeMarginPx = (10f * metrics.density).roundToInt()
+            val edgeMarginPx = (8f * metrics.density).roundToInt()
             val orbApproxPx = (74f * metrics.density).roundToInt()
+
+            val defaultX = (screenWidthPx - orbApproxPx - edgeMarginPx).coerceAtLeast(edgeMarginPx)
+            val defaultY = (screenHeightPx * 0.34f).roundToInt()
+            val savedX = prefs.getInt(BotOverlayService.KEY_OVERLAY_X, defaultX)
+                .coerceIn(edgeMarginPx, (screenWidthPx - orbApproxPx - edgeMarginPx).coerceAtLeast(edgeMarginPx))
+            val savedY = prefs.getInt(BotOverlayService.KEY_OVERLAY_Y, defaultY)
+                .coerceIn(edgeMarginPx, (screenHeightPx - orbApproxPx - edgeMarginPx).coerceAtLeast(edgeMarginPx))
 
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -83,8 +94,8 @@ class AccessibilityFloatingWindowManager(
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
-                x = (screenWidthPx - orbApproxPx - edgeMarginPx).coerceAtLeast(edgeMarginPx)
-                y = (screenHeightPx * 0.34f).roundToInt()
+                x = savedX
+                y = savedY
             }
             overlayWindowParams = params
 
@@ -100,28 +111,30 @@ class AccessibilityFloatingWindowManager(
                         onDragStart = {},
                         onDragDelta = { dx, dy ->
                             val p = overlayWindowParams ?: return@SystemAssistantOverlayContent
+                            val liveMetrics = service.resources.displayMetrics
+                            val maxW = liveMetrics.widthPixels
+                            val maxH = liveMetrics.heightPixels
                             val viewW = composeView?.width?.takeIf { it > 0 } ?: orbApproxPx
                             val viewH = composeView?.height?.takeIf { it > 0 } ?: orbApproxPx
                             p.x = (p.x + dx.roundToInt()).coerceIn(
                                 edgeMarginPx,
-                                (screenWidthPx - viewW - edgeMarginPx).coerceAtLeast(edgeMarginPx)
+                                (maxW - viewW - edgeMarginPx).coerceAtLeast(edgeMarginPx)
                             )
                             p.y = (p.y + dy.roundToInt()).coerceIn(
                                 edgeMarginPx,
-                                (screenHeightPx - viewH - edgeMarginPx).coerceAtLeast(edgeMarginPx)
+                                (maxH - viewH - edgeMarginPx).coerceAtLeast(edgeMarginPx)
                             )
                             composeView?.let { v ->
                                 runCatching { wm.updateViewLayout(v, p) }
                             }
                         },
                         onDragEnd = {
+                            // Keep the user's exact free-placed X/Y coordinates anywhere on screen & persist them
                             val p = overlayWindowParams ?: return@SystemAssistantOverlayContent
-                            val viewW = composeView?.width?.takeIf { it > 0 } ?: orbApproxPx
-                            val snapRight = (screenWidthPx - viewW - edgeMarginPx).coerceAtLeast(edgeMarginPx)
-                            p.x = if (p.x + viewW / 2 < screenWidthPx / 2) edgeMarginPx else snapRight
-                            composeView?.let { v ->
-                                runCatching { wm.updateViewLayout(v, p) }
-                            }
+                            prefs.edit()
+                                .putInt(BotOverlayService.KEY_OVERLAY_X, p.x)
+                                .putInt(BotOverlayService.KEY_OVERLAY_Y, p.y)
+                                .apply()
                         }
                     )
                 }

@@ -26,6 +26,7 @@ import com.mote.app.ai.SequentialToolOrchestrator
 import com.mote.app.control.BatteryResourceMonitor
 import com.mote.app.control.BatteryTelemetrySnapshot
 import com.mote.app.control.CalendarToolsManager
+import com.mote.app.control.ClipboardToolsManager
 import com.mote.app.control.ClockToolsManager
 import com.mote.app.control.DeviceAutomationToolsManager
 import com.mote.app.control.LiveVoiceCallBridge
@@ -213,6 +214,7 @@ class LocalModelManager(context: Context) {
     val calendarTools = CalendarToolsManager(appContext)
     val deviceTools = DeviceAutomationToolsManager(appContext)
     val notesTools = NotesToolsManager(appContext)
+    val clipboardTools = ClipboardToolsManager(appContext)
     val voiceCallBridge = LiveVoiceCallBridge(appContext, internalAiRouter)
 
     private val _loadedModel = MutableStateFlow<LoadedLocalModelState?>(null)
@@ -261,6 +263,7 @@ class LocalModelManager(context: Context) {
         deviceTools = deviceTools,
         notesTools = notesTools,
         voiceCallBridge = voiceCallBridge,
+        clipboardTools = clipboardTools,
         aiRouter = internalAiRouter,
         dao = dao,
         scope = scope,
@@ -290,7 +293,8 @@ class LocalModelManager(context: Context) {
         toolRegistry = toolRegistry,
         dao = dao,
         scope = scope,
-        stateManager = toolChainStateManager
+        stateManager = toolChainStateManager,
+        appContext = appContext
     )
 
     private val _toolPermissions = MutableStateFlow(ToolPermissionInspector.inspect(appContext))
