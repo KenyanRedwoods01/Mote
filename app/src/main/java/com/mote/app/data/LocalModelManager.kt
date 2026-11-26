@@ -281,10 +281,16 @@ class LocalModelManager(context: Context) {
         }
     )
 
+    val toolChainStateManager = com.mote.app.ai.ToolChainStateManager(
+        dao = dao,
+        scope = scope
+    )
+
     val toolOrchestrator = SequentialToolOrchestrator(
         toolRegistry = toolRegistry,
         dao = dao,
-        scope = scope
+        scope = scope,
+        stateManager = toolChainStateManager
     )
 
     private val _toolPermissions = MutableStateFlow(ToolPermissionInspector.inspect(appContext))

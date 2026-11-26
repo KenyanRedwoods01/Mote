@@ -12,22 +12,47 @@ import java.util.Locale
 
 class MoteAccessibilityService : AccessibilityService() {
 
+    private var floatingWindowManager: AccessibilityFloatingWindowManager? = null
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        floatingWindowManager = AccessibilityFloatingWindowManager(
+            service = this,
+            screenContextProvider = { captureRedactedScreenSummary() }
+        ).also { mgr ->
+            mgr.attachAndShow()
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Zero idle CPU: only track foreground package to auto-hide bots on sensitive apps
+        // Zero idle CPU: track foreground package and auto-hide overlay on sensitive apps
         val pkg = event?.packageName?.toString()
         currentPackageName = pkg
+        val blocked = PrivacyGuard.isPackageBlocked(pkg)
+        floatingWindowManager?.setPrivacyHidden(blocked)
+        SystemOverlayStateBus.publishForegroundPackage(pkg, blocked)
     }
 
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
+        floatingWindowManager?.detach()
+        floatingWindowManager = null
         if (instance === this) instance = null
         super.onDestroy()
+    }
+
+    fun showFloatingOverlay(): Boolean {
+        val mgr = floatingWindowManager ?: AccessibilityFloatingWindowManager(
+            service = this,
+            screenContextProvider = { captureRedactedScreenSummary() }
+        ).also { floatingWindowManager = it }
+        return mgr.attachAndShow()
+    }
+
+    fun hideFloatingOverlay() {
+        floatingWindowManager?.hide()
     }
 
     /**

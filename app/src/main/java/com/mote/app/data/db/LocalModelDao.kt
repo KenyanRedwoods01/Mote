@@ -194,5 +194,27 @@ interface LocalModelDao {
 
     @Query("DELETE FROM tool_chain_runs")
     suspend fun clearToolChainRuns()
+
+    @Query("SELECT * FROM tool_chain_states ORDER BY updatedAtEpochMs DESC LIMIT 120")
+    fun observeRecentToolChainStates(): Flow<List<ToolChainStateEntity>>
+
+    @Query("SELECT * FROM tool_chain_states WHERE chainId = :chainId ORDER BY stepIndex ASC, createdAtEpochMs ASC")
+    fun observeStatesForChain(chainId: String): Flow<List<ToolChainStateEntity>>
+
+    @Query("SELECT * FROM tool_chain_states WHERE chainId = :chainId ORDER BY stepIndex ASC, createdAtEpochMs ASC")
+    suspend fun getStatesForChainOnce(chainId: String): List<ToolChainStateEntity>
+
+    @Query("SELECT * FROM tool_chain_states WHERE outputKey = :outputKey ORDER BY updatedAtEpochMs DESC LIMIT 1")
+    suspend fun getLatestStateByKey(outputKey: String): ToolChainStateEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertToolChainState(state: ToolChainStateEntity)
+
+    @Query("UPDATE tool_chain_states SET consumedByStepIndex = :consumerStepIndex, status = 'CONSUMED', updatedAtEpochMs = :updatedAtEpochMs WHERE stateId = :stateId")
+    suspend fun markToolChainStateConsumed(stateId: String, consumerStepIndex: Int, updatedAtEpochMs: Long)
+
+    @Query("DELETE FROM tool_chain_states")
+    suspend fun clearToolChainStates()
 }
+
 

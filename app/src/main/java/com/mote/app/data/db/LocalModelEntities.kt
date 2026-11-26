@@ -162,3 +162,24 @@ data class ToolChainRunEntity(
     val stepsJson: String
 )
 
+/**
+ * Room entity persisting intermediate outputs and dependencies between sequential tool calls
+ * (e.g., Step 1 `openApp` -> `lastOpenedApp = Chrome` -> consumed by Step 2 `searchInApp`,
+ * or Step 1 `takeScreenshot` -> `lastCaptureId` -> Step 2 `ocrAnalysis` -> `lastExtractedText` -> Step 3 `saveNote`).
+ */
+@Entity(tableName = "tool_chain_states")
+data class ToolChainStateEntity(
+    @PrimaryKey val stateId: String,
+    val chainId: String,
+    val stepIndex: Int,
+    val toolName: String,
+    val outputKey: String,
+    val outputValue: String,
+    val dependencyKey: String? = null,
+    val consumedByStepIndex: Int? = null,
+    val status: String = "READY",
+    val createdAtEpochMs: Long = System.currentTimeMillis(),
+    val updatedAtEpochMs: Long = System.currentTimeMillis()
+)
+
+

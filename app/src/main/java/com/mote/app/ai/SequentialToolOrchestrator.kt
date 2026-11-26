@@ -107,7 +107,8 @@ data class ToolChainRunResult(
 class SequentialToolOrchestrator(
     private val toolRegistry: GenUiToolRegistry,
     private val dao: LocalModelDao,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    val stateManager: ToolChainStateManager = ToolChainStateManager(dao, scope)
 ) {
 
     private val serializerJson = Json {
@@ -144,8 +145,13 @@ class SequentialToolOrchestrator(
             initialValue = emptyList()
         )
 
+    val persistedStates = stateManager.recentStates
+
     fun clearChainHistory() {
-        scope.launch { dao.clearToolChainRuns() }
+        scope.launch {
+            dao.clearToolChainRuns()
+            dao.clearToolChainStates()
+        }
     }
 
     /**
@@ -229,8 +235,17 @@ class SequentialToolOrchestrator(
         publishSnapshot(complete = false)
 
         for (i in invocations.indices) {
+            val stepNumber = i + 1
+            // Hydrate context from Room ToolChainStateEntity rows so state survives external app handoffs
+            runCatching { stateManager.hydrateContextForChain(chainId, context) }
+
             val originalInv = invocations[i]
-            val (resolvedInv, dependencyNote, missingDependencyError) = injectIntermediateState(originalInv, context)
+            val (resolvedInv, dependencyNote, missingDependencyError) = injectIntermediateState(
+                chainId = chainId,
+                stepIndex = stepNumber,
+                invocation = originalInv,
+                context = context
+            )
 
             if (missingDependencyError != null) {
                 steps[i] = steps[i].copy(
@@ -278,8 +293,15 @@ class SequentialToolOrchestrator(
                     null
                 }
 
-                // Store intermediate outputs in ToolChainContext for Step i+1
-                captureIntermediateState(resolvedInv, result, context)
+                // Persist intermediate outputs into Room ToolChainStateEntity + in-memory context for Step i+1
+                captureIntermediateState(
+                    chainId = chainId,
+                    stepIndex = stepNumber,
+                    invocation = resolvedInv,
+                    result = result,
+                    context = context,
+                    dependencyKey = dependencyNote
+                )
 
                 steps[i] = steps[i].copy(
                     status = status,
@@ -400,7 +422,7 @@ class SequentialToolOrchestrator(
                 ChatToolInvocation(
                     tool = "searchInApp",
                     args = buildJsonObject {
-                        put("appName", JsonPrimitive(appTarget))
+                        put("appName", JsonPrimitive("\$lastOpenedApp"))
                         put("query", JsonPrimitive(searchQuery))
                     }
                 )
@@ -779,34 +801,40 @@ class SequentialToolOrchestrator(
         return planned
     }
 
-    private fun injectIntermediateState(
+    private suspend fun injectIntermediateState(
+        chainId: String,
+        stepIndex: Int,
         invocation: ChatToolInvocation,
         context: ToolChainContext
     ): Triple<ChatToolInvocation, String?, String?> {
         val op = invocation.tool.trim().lowercase(Locale.US)
 
-        // Pipe screenshot captureId -> OCR Analysis
+        // Pipe screenshot captureId -> OCR Analysis (hydrated via Room ToolChainState)
         if (op in setOf("ocranalysis", "ocr", "extracttext", "extract_text", "readscreenshot", "read_screenshot_text")) {
             val rawCap = invocation.args["captureId"]?.jsonPrimitive?.contentOrNull
-            if ((rawCap.isNullOrBlank() || rawCap.startsWith("$")) && !context.lastCaptureId.isNullOrBlank()) {
+            val persistedCap = stateManager.resolveDependency(chainId, ToolChainStateManager.KEY_LAST_CAPTURE_ID)
+            val resolvedCapId = context.lastCaptureId ?: persistedCap?.outputValue
+            if ((rawCap.isNullOrBlank() || rawCap.startsWith("$")) && !resolvedCapId.isNullOrBlank()) {
+                persistedCap?.let { stateManager.markConsumed(it.stateId, stepIndex) }
                 val merged = buildJsonObject {
                     invocation.args.forEach { (k, v) -> put(k, v) }
-                    put("captureId", JsonPrimitive(context.lastCaptureId!!))
+                    put("captureId", JsonPrimitive(resolvedCapId))
                 }
                 return Triple(
                     invocation.copy(args = merged),
-                    "Piped screenshot (${context.lastCaptureId}) from previous step",
+                    "Room state piped: lastCaptureId=$resolvedCapId",
                     null
                 )
             }
         }
 
-        // Pipe OCR extracted text -> Save to Notes
+        // Pipe OCR extracted text -> Save to Notes (hydrated via Room ToolChainState)
         if (op in setOf("savenote", "savetonotes", "save_note", "save_to_notes", "createnote", "addnote")) {
             val rawContent = invocation.args["content"]?.jsonPrimitive?.contentOrNull
                 ?: invocation.args["text"]?.jsonPrimitive?.contentOrNull
             if (rawContent.isNullOrBlank() || rawContent.contains("\$lastExtractedText")) {
-                val extracted = context.lastExtractedText
+                val persistedText = stateManager.resolveDependency(chainId, ToolChainStateManager.KEY_LAST_EXTRACTED_TEXT)
+                val extracted = context.lastExtractedText ?: persistedText?.outputValue
                 if (extracted.isNullOrBlank()) {
                     return Triple(
                         invocation,
@@ -814,26 +842,28 @@ class SequentialToolOrchestrator(
                         "Skipped Save to Notes — dependent OCR analysis step did not produce extracted text."
                     )
                 }
+                persistedText?.let { stateManager.markConsumed(it.stateId, stepIndex) }
                 val merged = buildJsonObject {
                     invocation.args.forEach { (k, v) -> put(k, v) }
                     put("content", JsonPrimitive(extracted))
                 }
                 return Triple(
                     invocation.copy(args = merged),
-                    "Piped OCR text (${extracted.length} chars) from Step ${context.stepOutputs.size}",
+                    "Room state piped: lastExtractedText (${extracted.length} chars)",
                     null
                 )
             }
         }
 
-        // Pipe screenshot URI / OCR text -> Share to App
+        // Pipe screenshot URI / OCR text -> Share to App (hydrated via Room ToolChainState)
         if (op in setOf("sharetoapp", "sharecontent", "share_screenshot", "sharescreenshot")) {
             val explicitUri = invocation.args["mediaUri"]?.jsonPrimitive?.contentOrNull
                 ?: invocation.args["uri"]?.jsonPrimitive?.contentOrNull
             val wantsScreenshot = invocation.args["useLastScreenshot"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
 
             if ((explicitUri.isNullOrBlank() || explicitUri.startsWith("$")) && wantsScreenshot) {
-                val savedUri = context.lastSavedUri
+                val persistedUri = stateManager.resolveDependency(chainId, ToolChainStateManager.KEY_LAST_SAVED_URI)
+                val savedUri = context.lastSavedUri ?: persistedUri?.outputValue
                 if (savedUri.isNullOrBlank()) {
                     return Triple(
                         invocation,
@@ -841,6 +871,7 @@ class SequentialToolOrchestrator(
                         "Skipped share — dependent screenshot capture did not produce a saved image URI."
                     )
                 }
+                persistedUri?.let { stateManager.markConsumed(it.stateId, stepIndex) }
                 val merged = buildJsonObject {
                     invocation.args.forEach { (k, v) -> put(k, v) }
                     put("mediaUri", JsonPrimitive(savedUri))
@@ -852,23 +883,26 @@ class SequentialToolOrchestrator(
                 }
                 return Triple(
                     invocation.copy(args = merged),
-                    "Piped screenshot URI from capture step",
+                    "Room state piped: lastSavedUri",
                     null
                 )
             }
         }
 
-        // Pipe opened app -> searchInApp
+        // Pipe opened app -> searchInApp (e.g., Step 1 openApp('Chrome') -> Step 2 searchInApp('$lastOpenedApp', query))
         if (op in setOf("searchinapp", "searchchrome", "openchromeandsearch", "searchyoutube")) {
             val appArg = invocation.args["appName"]?.jsonPrimitive?.contentOrNull
-            if ((appArg.isNullOrBlank() || appArg.startsWith("$")) && !context.lastOpenedApp.isNullOrBlank()) {
+            val persistedApp = stateManager.resolveDependency(chainId, ToolChainStateManager.KEY_LAST_OPENED_APP)
+            val resolvedApp = context.lastOpenedApp ?: persistedApp?.outputValue
+            if ((appArg.isNullOrBlank() || appArg.startsWith("$")) && !resolvedApp.isNullOrBlank()) {
+                persistedApp?.let { stateManager.markConsumed(it.stateId, stepIndex) }
                 val merged = buildJsonObject {
                     invocation.args.forEach { (k, v) -> put(k, v) }
-                    put("appName", JsonPrimitive(context.lastOpenedApp!!))
+                    put("appName", JsonPrimitive(resolvedApp))
                 }
                 return Triple(
                     invocation.copy(args = merged),
-                    "Piped target app '${context.lastOpenedApp}' from previous step",
+                    "Room state piped: lastOpenedApp=$resolvedApp",
                     null
                 )
             }
@@ -877,14 +911,17 @@ class SequentialToolOrchestrator(
         // Pipe dialed phone number -> startVoiceCallRelay
         if (op in setOf("startvoicecallrelay", "startvoicerelay", "voicecallrelay", "livevoicerelay")) {
             val targetArg = invocation.args["targetLabel"]?.jsonPrimitive?.contentOrNull
-            if ((targetArg.isNullOrBlank() || targetArg.startsWith("$")) && !context.lastDialedNumber.isNullOrBlank()) {
+            val persistedNum = stateManager.resolveDependency(chainId, ToolChainStateManager.KEY_LAST_DIALED_NUMBER)
+            val resolvedNum = context.lastDialedNumber ?: persistedNum?.outputValue
+            if ((targetArg.isNullOrBlank() || targetArg.startsWith("$")) && !resolvedNum.isNullOrBlank()) {
+                persistedNum?.let { stateManager.markConsumed(it.stateId, stepIndex) }
                 val merged = buildJsonObject {
                     invocation.args.forEach { (k, v) -> put(k, v) }
-                    put("targetLabel", JsonPrimitive("Call ${context.lastDialedNumber}"))
+                    put("targetLabel", JsonPrimitive("Call $resolvedNum"))
                 }
                 return Triple(
                     invocation.copy(args = merged),
-                    "Piped dialed number (${context.lastDialedNumber}) from Phone step",
+                    "Room state piped: lastDialedNumber=$resolvedNum",
                     null
                 )
             }
@@ -893,55 +930,190 @@ class SequentialToolOrchestrator(
         return Triple(invocation, null, null)
     }
 
-    private fun captureIntermediateState(
+    private suspend fun captureIntermediateState(
+        chainId: String,
+        stepIndex: Int,
         invocation: ChatToolInvocation,
         result: GenUiToolResult,
-        context: ToolChainContext
+        context: ToolChainContext,
+        dependencyKey: String?
     ) {
         context.stepOutputs[result.operation] = result.feedback
+        runCatching {
+            stateManager.recordStepOutput(
+                chainId = chainId,
+                stepIndex = stepIndex,
+                toolName = result.operation,
+                outputKey = "step_${stepIndex}_output",
+                outputValue = result.feedback.take(240),
+                dependencyKey = dependencyKey
+            )
+        }
+
         if (!result.extractedText.isNullOrBlank()) {
             context.lastExtractedText = result.extractedText
+            runCatching {
+                stateManager.recordStepOutput(
+                    chainId = chainId,
+                    stepIndex = stepIndex,
+                    toolName = result.operation,
+                    outputKey = ToolChainStateManager.KEY_LAST_EXTRACTED_TEXT,
+                    outputValue = result.extractedText,
+                    dependencyKey = dependencyKey
+                )
+            }
         }
         if (!result.createdRecordId.isNullOrBlank() && result.toolId == GenUiToolRegistry.TOOL_NOTES) {
             context.lastNoteId = result.createdRecordId
+            runCatching {
+                stateManager.recordStepOutput(
+                    chainId = chainId,
+                    stepIndex = stepIndex,
+                    toolName = result.operation,
+                    outputKey = ToolChainStateManager.KEY_LAST_NOTE_ID,
+                    outputValue = result.createdRecordId,
+                    dependencyKey = dependencyKey
+                )
+            }
         }
         if (result.operation.equals("dialPhone", ignoreCase = true) && result.success) {
             val num = invocation.args["phoneNumber"]?.jsonPrimitive?.contentOrNull
-            if (!num.isNullOrBlank()) context.lastDialedNumber = num
+            if (!num.isNullOrBlank()) {
+                context.lastDialedNumber = num
+                runCatching {
+                    stateManager.recordStepOutput(
+                        chainId = chainId,
+                        stepIndex = stepIndex,
+                        toolName = result.operation,
+                        outputKey = ToolChainStateManager.KEY_LAST_DIALED_NUMBER,
+                        outputValue = num,
+                        dependencyKey = dependencyKey
+                    )
+                }
+            }
         }
         if (result.operation.equals("searchInApp", ignoreCase = true) && result.success) {
-            invocation.args["query"]?.jsonPrimitive?.contentOrNull?.let { context.lastSearchQuery = it }
+            invocation.args["query"]?.jsonPrimitive?.contentOrNull?.let { q ->
+                context.lastSearchQuery = q
+                runCatching {
+                    stateManager.recordStepOutput(
+                        chainId = chainId,
+                        stepIndex = stepIndex,
+                        toolName = result.operation,
+                        outputKey = ToolChainStateManager.KEY_LAST_SEARCH_QUERY,
+                        outputValue = q,
+                        dependencyKey = dependencyKey
+                    )
+                }
+            }
         }
         when (val part = result.uiPart) {
             is InChatUiPart.ScreenCapturePanel -> {
                 if (part.success) {
-                    if (!part.captureId.isNullOrBlank()) context.lastCaptureId = part.captureId
-                    if (!part.savedUriString.isNullOrBlank()) context.lastSavedUri = part.savedUriString
+                    if (!part.captureId.isNullOrBlank()) {
+                        context.lastCaptureId = part.captureId
+                        runCatching {
+                            stateManager.recordStepOutput(
+                                chainId = chainId,
+                                stepIndex = stepIndex,
+                                toolName = result.operation,
+                                outputKey = ToolChainStateManager.KEY_LAST_CAPTURE_ID,
+                                outputValue = part.captureId,
+                                dependencyKey = dependencyKey
+                            )
+                        }
+                    }
+                    if (!part.savedUriString.isNullOrBlank()) {
+                        context.lastSavedUri = part.savedUriString
+                        runCatching {
+                            stateManager.recordStepOutput(
+                                chainId = chainId,
+                                stepIndex = stepIndex,
+                                toolName = result.operation,
+                                outputKey = ToolChainStateManager.KEY_LAST_SAVED_URI,
+                                outputValue = part.savedUriString,
+                                dependencyKey = dependencyKey
+                            )
+                        }
+                    }
                 }
             }
             is InChatUiPart.OcrResultPanel -> {
                 if (part.success && part.extractedText.isNotBlank()) {
                     context.lastExtractedText = part.extractedText
+                    runCatching {
+                        stateManager.recordStepOutput(
+                            chainId = chainId,
+                            stepIndex = stepIndex,
+                            toolName = result.operation,
+                            outputKey = ToolChainStateManager.KEY_LAST_EXTRACTED_TEXT,
+                            outputValue = part.extractedText,
+                            dependencyKey = dependencyKey
+                        )
+                    }
                 }
             }
             is InChatUiPart.NotesPanel -> {
                 if (part.success && !part.highlightNoteId.isNullOrBlank()) {
                     context.lastNoteId = part.highlightNoteId
+                    runCatching {
+                        stateManager.recordStepOutput(
+                            chainId = chainId,
+                            stepIndex = stepIndex,
+                            toolName = result.operation,
+                            outputKey = ToolChainStateManager.KEY_LAST_NOTE_ID,
+                            outputValue = part.highlightNoteId,
+                            dependencyKey = dependencyKey
+                        )
+                    }
                 }
             }
             is InChatUiPart.ClockAlarmsPanel -> {
                 if (part.success && !part.highlightAlarmId.isNullOrBlank()) {
                     context.lastAlarmId = part.highlightAlarmId
+                    runCatching {
+                        stateManager.recordStepOutput(
+                            chainId = chainId,
+                            stepIndex = stepIndex,
+                            toolName = result.operation,
+                            outputKey = ToolChainStateManager.KEY_LAST_ALARM_ID,
+                            outputValue = part.highlightAlarmId,
+                            dependencyKey = dependencyKey
+                        )
+                    }
                 }
             }
             is InChatUiPart.CalendarEventsPanel -> {
                 if (part.success && !part.highlightEventId.isNullOrBlank()) {
                     context.lastEventId = part.highlightEventId
+                    runCatching {
+                        stateManager.recordStepOutput(
+                            chainId = chainId,
+                            stepIndex = stepIndex,
+                            toolName = result.operation,
+                            outputKey = ToolChainStateManager.KEY_LAST_EVENT_ID,
+                            outputValue = part.highlightEventId,
+                            dependencyKey = dependencyKey
+                        )
+                    }
                 }
             }
             is InChatUiPart.DeviceActionPanel -> {
                 if (part.success && part.category.equals("APPS", ignoreCase = true)) {
-                    context.lastOpenedApp = part.title.removePrefix("Opened ").trim()
+                    val launchedApp = part.title.removePrefix("Opened ").trim()
+                    if (launchedApp.isNotBlank()) {
+                        context.lastOpenedApp = launchedApp
+                        runCatching {
+                            stateManager.recordStepOutput(
+                                chainId = chainId,
+                                stepIndex = stepIndex,
+                                toolName = result.operation,
+                                outputKey = ToolChainStateManager.KEY_LAST_OPENED_APP,
+                                outputValue = launchedApp,
+                                dependencyKey = dependencyKey
+                            )
+                        }
+                    }
                 }
             }
             else -> Unit

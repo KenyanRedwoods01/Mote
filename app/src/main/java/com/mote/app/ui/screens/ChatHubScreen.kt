@@ -188,6 +188,7 @@ fun ChatHubScreen(
     val systemOverlayState by viewModel.systemOverlayState.collectAsStateWithLifecycle()
     val activeToolChain by viewModel.activeToolChain.collectAsStateWithLifecycle()
     val toolChainHistory by viewModel.toolChainHistory.collectAsStateWithLifecycle()
+    val toolChainStates by viewModel.toolChainStates.collectAsStateWithLifecycle()
     val capturedScreenshots by viewModel.capturedScreenshots.collectAsStateWithLifecycle()
     val inChatUiPartsByText by viewModel.inChatUiPartsByText.collectAsStateWithLifecycle()
 
@@ -378,17 +379,18 @@ fun ChatHubScreen(
 
             IconButton(
                 onClick = {
-                    if (Settings.canDrawOverlays(context)) {
-                        val started = SystemOverlayStateBus.ensureSystemOverlayRunning(context)
+                    val started = SystemOverlayStateBus.ensureSystemOverlayRunning(context)
+                    if (started) {
+                        val hostLabel = SystemOverlayStateBus.state.value.overlayHostMode
                         Toast.makeText(
                             context,
-                            if (started) "System Siri Overlay active over all apps" else "Could not start system overlay",
+                            "Lottie Voice Overlay active ($hostLabel)",
                             Toast.LENGTH_SHORT
                         ).show()
                     } else {
                         Toast.makeText(
                             context,
-                            "Grant 'Display over other apps' so Mote floats over Chrome & all apps",
+                            "Enable 'Display over other apps' or Mote Accessibility Service for persistent System UI overlay",
                             Toast.LENGTH_LONG
                         ).show()
                         val intent = Intent(
@@ -407,9 +409,9 @@ fun ChatHubScreen(
                 Icon(
                     imageVector = Icons.Outlined.Layers,
                     contentDescription = if (systemOverlayState.isServiceRunning) {
-                        "System overlay active over other apps"
+                        "System overlay active (${systemOverlayState.overlayHostMode})"
                     } else {
-                        "Launch system-wide Siri overlay over other apps"
+                        "Launch persistent Lottie overlay over apps and System UI"
                     },
                     tint = if (systemOverlayState.isServiceRunning) LocalNanoEmerald else CloudFlashCobalt,
                     modifier = Modifier.size(21.dp)
@@ -599,6 +601,7 @@ fun ChatHubScreen(
                     ToolExecutionLogHistoryPanel(
                         chains = toolChainHistory,
                         activeChain = activeToolChain,
+                        persistedStates = toolChainStates,
                         onClearLog = { viewModel.clearToolChainHistory() }
                     )
                 }

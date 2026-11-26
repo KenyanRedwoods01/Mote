@@ -49,6 +49,7 @@ import com.mote.app.ai.InChatUiPart
 import com.mote.app.ai.ToolChainExecutionSnapshot
 import com.mote.app.ai.ToolStepStatus
 import com.mote.app.data.db.SavedNoteEntity
+import com.mote.app.data.db.ToolChainStateEntity
 import com.mote.app.service.LiveVoiceRelayUiState
 import com.mote.app.service.VoiceRelayPhase
 import com.mote.app.ui.theme.LocalMoteColors
@@ -69,7 +70,8 @@ fun ToolExecutionLogHistoryPanel(
     chains: List<ToolChainExecutionSnapshot>,
     activeChain: ToolChainExecutionSnapshot?,
     onClearLog: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    persistedStates: List<ToolChainStateEntity> = emptyList()
 ) {
     val tokens = LocalMoteColors.current
     val mergedChains = remember(chains, activeChain) {
@@ -376,6 +378,38 @@ fun ToolExecutionLogHistoryPanel(
                                                 color = if (step.status == ToolStepStatus.EXECUTION_VERIFIED) LocalNanoEmerald else Color(0xFFD97706),
                                                 modifier = Modifier.padding(top = 2.dp),
                                                 maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+
+                                val chainPersistedStates = persistedStates.filter {
+                                    it.chainId == chain.chainId && !it.outputKey.startsWith("step_")
+                                }
+                                if (chainPersistedStates.isNotEmpty()) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(9.dp))
+                                            .background(tokens.accentBlueBg.copy(alpha = 0.7f))
+                                            .padding(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Text(
+                                            text = "PERSISTED TOOLCHAINSTATE (ROOM)",
+                                            fontSize = 8.5.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = tokens.accentBlue
+                                        )
+                                        chainPersistedStates.take(5).forEach { st ->
+                                            val consumerLabel = st.consumedByStepIndex?.let { " → Step #$it" } ?: ""
+                                            Text(
+                                                text = "Step #${st.stepIndex} ${st.outputKey}=${st.outputValue.take(42)}$consumerLabel",
+                                                fontSize = 9.5.sp,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = MoteNavy,
+                                                maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                         }

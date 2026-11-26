@@ -145,6 +145,7 @@ class MoteViewModel(
     val systemHealth: StateFlow<SystemHealthSnapshot> = localModelManager.systemHealth.health
     val activeToolChain: StateFlow<ToolChainExecutionSnapshot?> = localModelManager.toolOrchestrator.activeChain
     val toolChainHistory: StateFlow<List<ToolChainExecutionSnapshot>> = localModelManager.toolOrchestrator.chainHistoryLog
+    val toolChainStates: StateFlow<List<com.mote.app.data.db.ToolChainStateEntity>> = localModelManager.toolChainStateManager.recentStates
     val allBenchmarks: StateFlow<List<ModelBenchmarkEntity>> = localModelManager.allBenchmarks
     val liveBenchmark: StateFlow<LiveBenchmarkProgress?> = localModelManager.liveBenchmark
 
