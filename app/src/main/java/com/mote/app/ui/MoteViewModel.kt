@@ -1035,7 +1035,7 @@ class MoteViewModel(
             val res = localModelManager.notesTools.saveNote(
                 title = title,
                 content = content,
-                source = "OCR Quick Save"
+                sourceTag = "OCR Quick Save"
             )
             _utilityStatus.value = res.summary
         }

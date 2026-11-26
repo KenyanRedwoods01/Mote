@@ -649,7 +649,7 @@ fun InChatNotesWidget(
                                         .padding(horizontal = 6.dp, vertical = 1.dp)
                                 ) {
                                     Text(
-                                        text = note.source,
+                                        text = note.sourceTag,
                                         fontSize = 8.5.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = tokens.accentBlue
