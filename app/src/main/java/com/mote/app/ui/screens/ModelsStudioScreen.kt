@@ -78,6 +78,7 @@ fun ModelsStudioScreen(
     val lastAdaptiveRouteNote by viewModel.lastAdaptiveRouteNote.collectAsStateWithLifecycle()
     val aiCoreStatus by viewModel.aiCoreStatus.collectAsStateWithLifecycle()
     val toolSyncVerifications by viewModel.toolSyncVerifications.collectAsStateWithLifecycle()
+    val observedSystemEvents by viewModel.observedSystemEvents.collectAsStateWithLifecycle()
 
     var selectedStudioTab by remember { mutableIntStateOf(0) } // 0 = Models, 1 = Debug
     var showCreateSheet by remember { mutableStateOf(false) }
@@ -341,14 +342,22 @@ fun ModelsStudioScreen(
                 )
             }
 
-            // 1b. SystemHealthManager Battery/Thermal Adaptive Inference Toggle (Local vs Cloud)
-            item(key = "system_health_adaptive_card") {
-                SystemHealthAdaptiveCard(
+            // 1b. Unified 'System Health & Inference' Dashboard (Battery Temp, Thermal Throttling, Hybrid Mode & EventObserver)
+            item(key = "system_health_inference_dashboard") {
+                SystemHealthInferenceDashboard(
                     health = systemHealth,
+                    batteryTelemetry = batteryTelemetry,
+                    selectedHybridMode = MoteInferenceMode.fromString(studioPrefs.hybridInferenceMode),
+                    aiCoreStatus = aiCoreStatus,
                     adaptiveEnabled = studioPrefs.adaptiveThermalBatteryRouting,
                     lastRouteNote = lastAdaptiveRouteNote,
+                    observedEvents = observedSystemEvents,
                     onToggleAdaptive = { viewModel.setAdaptiveThermalBatteryRouting(it) },
-                    onRefresh = { viewModel.refreshSystemHealth() }
+                    onSelectHybridMode = { viewModel.setHybridInferenceMode(it) },
+                    onRefresh = {
+                        viewModel.refreshSystemHealth()
+                        viewModel.refreshBatteryTelemetry()
+                    }
                 )
             }
 

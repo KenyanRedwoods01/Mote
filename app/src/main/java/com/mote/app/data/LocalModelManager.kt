@@ -306,6 +306,8 @@ class LocalModelManager(context: Context) {
     )
     val toolSyncVerifications: StateFlow<List<ToolSyncVerificationRecord>> =
         toolExecutionSync.recentVerifications
+    val observedSystemEvents: StateFlow<List<com.mote.app.control.ObservedSystemEvent>> =
+        toolExecutionSync.observedSystemEvents
 
     val toolChainStateManager = com.mote.app.ai.ToolChainStateManager(
         dao = dao,
@@ -957,6 +959,9 @@ class LocalModelManager(context: Context) {
     fun refreshToolPermissions() {
         scope.launch(Dispatchers.IO) {
             val inspected = ToolPermissionInspector.inspect(appContext)
+            if (inspected.calendarGranted) {
+                toolExecutionSync.refreshObserverPermissions()
+            }
             if (_toolPermissions.value != inspected) {
                 _toolPermissions.value = inspected
             }
@@ -968,6 +973,7 @@ class LocalModelManager(context: Context) {
         _loadedModel.value = null
         batteryMonitor.stop()
         systemHealth.shutdown()
+        toolExecutionSync.shutdown()
         voiceCallBridge.shutdown()
         clockTools.stopAllTickers()
     }

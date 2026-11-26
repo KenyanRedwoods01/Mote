@@ -57,13 +57,80 @@ class ToolExecutionSyncService(
     private val notesTools: NotesToolsManager,
     private val clipboardTools: ClipboardToolsManager,
     private val networkTools: NetworkToolsManager,
-    private val voiceCallBridge: LiveVoiceCallBridge
+    private val voiceCallBridge: LiveVoiceCallBridge,
+    val eventObserver: SystemActionEventObserver = AndroidSystemEventObserver(context)
 ) {
     private val appContext = context.applicationContext
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
 
     private val _recentVerifications = MutableStateFlow<List<ToolSyncVerificationRecord>>(emptyList())
     val recentVerifications: StateFlow<List<ToolSyncVerificationRecord>> = _recentVerifications.asStateFlow()
+
+    val observedSystemEvents: StateFlow<List<ObservedSystemEvent>> = eventObserver.observedEvents
+
+    init {
+        eventObserver.start()
+    }
+
+    fun refreshObserverPermissions() {
+        eventObserver.ensureCalendarObserverRegistered()
+    }
+
+    fun shutdown() {
+        eventObserver.stop()
+    }
+
+    /**
+     * Confirms a Generative UI device action (Brightness, Do Not Disturb, CopyText, StartTimer)
+     * by awaiting the corresponding OS [ContentObserver] or [BroadcastReceiver] event before
+     * recording a verified entry into [recentVerifications].
+     */
+    suspend fun verifyGenUiDeviceAction(
+        action: com.mote.app.ai.MoteAction,
+        beforeElapsedMs: Long,
+        apiSucceeded: Boolean
+    ): BackgroundVerificationResult {
+        val startCheck = SystemClock.elapsedRealtime()
+        val (opName, expectedCategory) = when (action) {
+            is com.mote.app.ai.MoteAction.SetBrightness -> "setBrightness" to SystemEventCategory.SCREEN_BRIGHTNESS
+            is com.mote.app.ai.MoteAction.ToggleDnd -> "toggleDnd" to SystemEventCategory.DND_POLICY
+            is com.mote.app.ai.MoteAction.StartTimer -> "startTimer" to SystemEventCategory.ALARM_CLOCK
+            is com.mote.app.ai.MoteAction.CopyText -> "copyText" to SystemEventCategory.CLIPBOARD
+            is com.mote.app.ai.MoteAction.PasteReply -> "pasteReply" to null
+            is com.mote.app.ai.MoteAction.ConfirmSendMessage -> "confirmSendMessage" to null
+        }
+        val syntheticResult = GenUiToolResult(
+            toolId = GenUiToolRegistry.TOOL_GEN_UI_WIDGETS,
+            operation = opName,
+            success = apiSucceeded,
+            feedback = opName,
+            uiPart = null
+        )
+        if (!apiSucceeded) {
+            return recordAndReturn(
+                result = syntheticResult,
+                verified = false,
+                source = "GenUI DeviceAction",
+                detail = "Android OS rejected $opName (permission missing or blocked)",
+                startCheck = startCheck
+            )
+        }
+        val observed = expectedCategory?.let { cat ->
+            eventObserver.awaitEvent(cat, sinceElapsedMs = beforeElapsedMs, timeoutMs = 550L)
+        }
+        val detail = if (observed != null) {
+            "Confirmed via ${observed.mechanism}: ${observed.detail}"
+        } else {
+            "Verified $opName API completion"
+        }
+        return recordAndReturn(
+            result = syntheticResult,
+            verified = true,
+            source = observed?.let { "${it.mechanism} · ${it.category.label}" } ?: "GenUI DeviceAction",
+            detail = detail,
+            startCheck = startCheck
+        )
+    }
 
     suspend fun capturePreExecutionSnapshot(): PreExecutionSnapshot {
         val sw = clockTools.stopwatch.value
@@ -114,7 +181,7 @@ class ToolExecutionSyncService(
             GenUiToolRegistry.TOOL_CALENDAR -> verifyCalendarSync(result, op, before, startCheck)
             GenUiToolRegistry.TOOL_NOTES -> verifyNotesSync(result, op, before, startCheck)
             GenUiToolRegistry.TOOL_SCREEN_CAPTURE -> verifyScreenCaptureSync(result, op, startCheck)
-            GenUiToolRegistry.TOOL_CLIPBOARD -> verifyClipboardSync(result, startCheck)
+            GenUiToolRegistry.TOOL_CLIPBOARD -> verifyClipboardSync(result, before, startCheck)
             GenUiToolRegistry.TOOL_NETWORK -> verifyNetworkSync(result, startCheck)
             GenUiToolRegistry.TOOL_CAMERA -> verifyCameraSync(result, op, before, startCheck)
             GenUiToolRegistry.TOOL_APP_CONTROL -> verifyAppControlSync(result, startCheck)
@@ -192,20 +259,30 @@ class ToolExecutionSyncService(
                     )
                 } else {
                     val osScheduled = clockTools.isAlarmScheduledInSystem(record.id)
+                    val alarmBroadcast = eventObserver.awaitEvent(
+                        category = SystemEventCategory.ALARM_CLOCK,
+                        sinceElapsedMs = before.capturedAtMs,
+                        timeoutMs = 260L
+                    )
                     val stateMatches = if (record.enabled) {
-                        osScheduled || (panel?.alarmManagerMode?.contains("Room", ignoreCase = true) == true)
+                        osScheduled || alarmBroadcast != null || (panel?.alarmManagerMode?.contains("Room", ignoreCase = true) == true)
                     } else {
                         !osScheduled
+                    }
+                    val observerSource = if (alarmBroadcast != null) {
+                        "BroadcastReceiver · AlarmManager"
+                    } else {
+                        "AlarmManager PendingIntent"
                     }
                     recordAndReturn(
                         result = result,
                         verified = stateMatches,
-                        source = "AlarmManager PendingIntent",
+                        source = observerSource,
                         detail = if (record.enabled) {
-                            if (osScheduled) {
-                                "Verified AlarmManager PendingIntent active for '${record.label}' (${ClockToolsManager.formatAlarmTime(record.hour, record.minute)})"
-                            } else {
-                                "Room persisted '${record.label}', PendingIntent registration unconfirmed"
+                            when {
+                                alarmBroadcast != null -> "Confirmed via BroadcastReceiver & PendingIntent for '${record.label}' (${ClockToolsManager.formatAlarmTime(record.hour, record.minute)})"
+                                osScheduled -> "Verified AlarmManager PendingIntent active for '${record.label}' (${ClockToolsManager.formatAlarmTime(record.hour, record.minute)})"
+                                else -> "Room persisted '${record.label}', PendingIntent registration unconfirmed"
                             }
                         } else {
                             "Verified '${record.label}' disabled & AlarmManager PendingIntent cleared"
@@ -482,11 +559,26 @@ class ToolExecutionSyncService(
                 true to "Verified Calendar DB state (${events.size} event${if (events.size == 1) "" else "s"})"
             }
         }
+        eventObserver.ensureCalendarObserverRegistered()
+        val calObserverEvent = if (found?.syncedToSystemCalendar == true || op.contains("delete")) {
+            eventObserver.awaitEvent(
+                category = SystemEventCategory.CALENDAR_PROVIDER,
+                sinceElapsedMs = before.capturedAtMs,
+                timeoutMs = 320L
+            )
+        } else {
+            null
+        }
+        val finalDetail = if (calObserverEvent != null && ok) {
+            "$detail · Confirmed by ContentObserver"
+        } else {
+            detail
+        }
         return recordAndReturn(
             result = result,
             verified = ok,
-            source = "CalendarContract + Room",
-            detail = detail,
+            source = if (calObserverEvent != null) "ContentObserver · CalendarContract" else "CalendarContract + Room",
+            detail = finalDetail,
             startCheck = startCheck
         )
     }
@@ -550,18 +642,28 @@ class ToolExecutionSyncService(
 
     private suspend fun verifyClipboardSync(
         result: GenUiToolResult,
+        before: PreExecutionSnapshot,
         startCheck: Long
     ): BackgroundVerificationResult {
         val panel = result.uiPart as? InChatUiPart.ClipboardPanel
+        val clipEvent = eventObserver.latestEventSince(
+            category = SystemEventCategory.CLIPBOARD,
+            sinceElapsedMs = before.capturedAtMs
+        )
         val (verified, detail) = clipboardTools.verifyClipboardState(
             operation = result.operation,
             expectedText = panel?.clipboardText
         )
+        val enrichedDetail = if (clipEvent != null && verified) {
+            "$detail (confirmed via OnPrimaryClipChangedListener)"
+        } else {
+            detail
+        }
         return recordAndReturn(
             result = result,
             verified = verified,
-            source = "ClipboardManager",
-            detail = detail,
+            source = if (clipEvent != null) "EventObserver · ClipboardManager" else "ClipboardManager",
+            detail = enrichedDetail,
             startCheck = startCheck
         )
     }

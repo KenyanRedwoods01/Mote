@@ -172,6 +172,18 @@ class MoteViewModel(
     val aiCoreStatus: StateFlow<com.mote.app.ai.AiCoreStatusSnapshot> = localModelManager.aiCoreStatus
     val toolSyncVerifications: StateFlow<List<com.mote.app.control.ToolSyncVerificationRecord>> =
         localModelManager.toolSyncVerifications
+    val observedSystemEvents: StateFlow<List<com.mote.app.control.ObservedSystemEvent>> =
+        localModelManager.observedSystemEvents
+
+    fun recordGenUiActionVerification(action: com.mote.app.ai.MoteAction, beforeElapsedMs: Long, apiSucceeded: Boolean) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            localModelManager.toolExecutionSync.verifyGenUiDeviceAction(
+                action = action,
+                beforeElapsedMs = beforeElapsedMs,
+                apiSucceeded = apiSucceeded
+            )
+        }
+    }
 
     // Inline Generative UI & Clock widgets attached to assistant chat messages by normalized text key
     private val _inChatUiPartsByText = MutableStateFlow<Map<String, List<InChatUiPart>>>(emptyMap())

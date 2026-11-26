@@ -692,7 +692,12 @@ fun ChatHubScreen(
                             onControlStopwatch = { action -> viewModel.controlClockStopwatch(action) },
                             onDeleteCalendarEvent = { id -> viewModel.deleteCalendarEvent(id) },
                             onSyncCalendarEventToSystem = { ev -> viewModel.syncCalendarEventToAndroid(ev) },
-                            onExecuteGenUiAction = { action -> executor.execute(action) },
+                            onExecuteGenUiAction = { action ->
+                                val t0 = android.os.SystemClock.elapsedRealtime()
+                                val ok = executor.execute(action)
+                                viewModel.recordGenUiActionVerification(action, t0, ok)
+                                ok
+                            },
                             onAnalyzeScreenshot = { capId, prompt ->
                                 viewModel.analyzeCapturedScreenshot(capId, prompt, selectedBot)
                             },
@@ -754,7 +759,12 @@ fun ChatHubScreen(
                                 onControlStopwatch = { action -> viewModel.controlClockStopwatch(action) },
                                 onDeleteCalendarEvent = { id -> viewModel.deleteCalendarEvent(id) },
                                 onSyncCalendarEventToSystem = { ev -> viewModel.syncCalendarEventToAndroid(ev) },
-                                onExecuteGenUiAction = { action -> executor.execute(action) },
+                                onExecuteGenUiAction = { action ->
+                                    val t0 = android.os.SystemClock.elapsedRealtime()
+                                    val ok = executor.execute(action)
+                                    viewModel.recordGenUiActionVerification(action, t0, ok)
+                                    ok
+                                },
                                 onAnalyzeScreenshot = { capId, prompt ->
                                     viewModel.analyzeCapturedScreenshot(capId, prompt, selectedBot)
                                 },
