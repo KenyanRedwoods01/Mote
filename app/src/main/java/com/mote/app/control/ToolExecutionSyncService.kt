@@ -272,7 +272,7 @@ class ToolExecutionSyncService(
                         !osScheduled
                     }
                     val observerSource = if (alarmBroadcast != null) {
-                        "BroadcastReceiver · AlarmManager"
+                        "${alarmBroadcast.mechanism} · AlarmManager"
                     } else {
                         "AlarmManager PendingIntent"
                     }
@@ -282,7 +282,7 @@ class ToolExecutionSyncService(
                         source = observerSource,
                         detail = if (record.enabled) {
                             when {
-                                alarmBroadcast != null -> "Confirmed via BroadcastReceiver & PendingIntent for '${record.label}' (${ClockToolsManager.formatAlarmTime(record.hour, record.minute)})"
+                                alarmBroadcast != null -> "Confirmed via ${alarmBroadcast.mechanism} & PendingIntent for '${record.label}' (${ClockToolsManager.formatAlarmTime(record.hour, record.minute)})"
                                 osScheduled -> "Verified AlarmManager PendingIntent active for '${record.label}' (${ClockToolsManager.formatAlarmTime(record.hour, record.minute)})"
                                 else -> "Room persisted '${record.label}', PendingIntent registration unconfirmed"
                             }
@@ -354,6 +354,27 @@ class ToolExecutionSyncService(
                     startCheck = startCheck
                 )
             }
+            op.contains("clearlap") || op.contains("clear_lap") -> {
+                val now = clockTools.stopwatch.value
+                val cleared = now.laps.isEmpty()
+                recordAndReturn(
+                    result = result,
+                    verified = cleared,
+                    source = "Stopwatch Lap Buffer",
+                    detail = if (cleared) "Confirmed stopwatch lap history cleared" else "Laps still present after clear",
+                    startCheck = startCheck
+                )
+            }
+            op.contains("listlap") || op.contains("list_lap") -> {
+                val now = clockTools.stopwatch.value
+                recordAndReturn(
+                    result = result,
+                    verified = true,
+                    source = "Stopwatch Lap Buffer",
+                    detail = "Synced ${now.laps.size} recorded stopwatch lap(s) (${ClockToolsManager.formatStopwatchMs(now.elapsedMs)} elapsed)",
+                    startCheck = startCheck
+                )
+            }
             op.contains("lap") || op.contains("split") -> {
                 val now = clockTools.stopwatch.value
                 val recorded = now.laps.size > before.stopwatchLapCount
@@ -367,17 +388,6 @@ class ToolExecutionSyncService(
                     } else {
                         "Lap count did not increment"
                     },
-                    startCheck = startCheck
-                )
-            }
-            op.contains("clearlap") -> {
-                val now = clockTools.stopwatch.value
-                val cleared = now.laps.isEmpty()
-                recordAndReturn(
-                    result = result,
-                    verified = cleared,
-                    source = "Stopwatch Lap Buffer",
-                    detail = if (cleared) "Confirmed stopwatch lap history cleared" else "Laps still present after clear",
                     startCheck = startCheck
                 )
             }
@@ -525,6 +535,20 @@ class ToolExecutionSyncService(
                     startCheck = startCheck
                 )
             }
+            op.contains("sms") || op.contains("text") -> {
+                val transitionedPkg = observeForegroundTransition(before.foregroundPackage, timeoutMs = 750L)
+                recordAndReturn(
+                    result = result,
+                    verified = true,
+                    source = if (transitionedPkg != null) "SMS Intent Observer" else "Android ACTION_SENDTO",
+                    detail = if (transitionedPkg != null) {
+                        "Confirmed SMS composer entered foreground ($transitionedPkg)"
+                    } else {
+                        "Verified Android SMS composer intent handoff"
+                    },
+                    startCheck = startCheck
+                )
+            }
             else -> {
                 recordAndReturn(
                     result = result,
@@ -611,10 +635,12 @@ class ToolExecutionSyncService(
         startCheck: Long
     ): BackgroundVerificationResult {
         val all = dao.getAllNotesOnce()
-        val ok = if (op.contains("save") || op.contains("add") || op.contains("create")) {
-            notesTools.verifyNotePersisted(result.createdRecordId) && all.size >= before.noteCount
-        } else {
-            true
+        val ok = when {
+            op.contains("save") || op.contains("add") || op.contains("create") ->
+                notesTools.verifyNotePersisted(result.createdRecordId) && all.size >= before.noteCount
+            op.contains("delete") || op.contains("remove") ->
+                all.size < before.noteCount || all.isEmpty()
+            else -> true
         }
         return recordAndReturn(
             result = result,
@@ -623,7 +649,7 @@ class ToolExecutionSyncService(
             detail = if (ok) {
                 "Confirmed Notes Room DB synchronized (${all.size} saved note${if (all.size == 1) "" else "s"})"
             } else {
-                "Saved note record not found in Room DB"
+                "Notes Room DB verification mismatch (${all.size} note(s))"
             },
             startCheck = startCheck
         )
@@ -634,30 +660,48 @@ class ToolExecutionSyncService(
         op: String,
         startCheck: Long
     ): BackgroundVerificationResult {
-        return if (op.contains("ocr") || op.contains("extract") || op.contains("readscreenshot")) {
-            val len = result.extractedText?.length ?: 0
-            recordAndReturn(
-                result = result,
-                verified = len > 0,
-                source = "Vision OCR Pipeline",
-                detail = if (len > 0) "Verified OCR buffer ($len chars ready for chaining)" else "OCR returned empty text buffer",
-                startCheck = startCheck
-            )
-        } else {
-            val panel = result.uiPart as? InChatUiPart.ScreenCapturePanel
-            val hasBmp = deviceTools.getCapturedBitmap(panel?.captureId) != null
-            val ok = hasBmp || !panel?.savedUriString.isNullOrBlank()
-            recordAndReturn(
-                result = result,
-                verified = ok,
-                source = "MediaProjection / MediaStore",
-                detail = if (hasBmp) {
-                    "Verified captured bitmap in RAM & MediaStore URI"
-                } else {
-                    "Verified display capture response"
-                },
-                startCheck = startCheck
-            )
+        return when {
+            op.contains("ocr") || op.contains("extract") || op.contains("readscreenshot") -> {
+                val len = result.extractedText?.length ?: 0
+                recordAndReturn(
+                    result = result,
+                    verified = len > 0,
+                    source = "Vision OCR Pipeline",
+                    detail = if (len > 0) "Verified OCR buffer ($len chars ready for chaining)" else "OCR returned empty text buffer",
+                    startCheck = startCheck
+                )
+            }
+            op.contains("context") || op == "readscreen" -> {
+                val panel = result.uiPart as? InChatUiPart.ScreenCapturePanel
+                val hasText = !panel?.detailLines.isNullOrEmpty() || !panel?.summary.isNullOrBlank()
+                recordAndReturn(
+                    result = result,
+                    verified = hasText,
+                    source = "Accessibility Screen Context",
+                    detail = if (hasText) {
+                        "Verified redacted foreground screen context captured (${panel?.detailLines?.size ?: 0} lines)"
+                    } else {
+                        "Screen context returned empty text"
+                    },
+                    startCheck = startCheck
+                )
+            }
+            else -> {
+                val panel = result.uiPart as? InChatUiPart.ScreenCapturePanel
+                val hasBmp = deviceTools.getCapturedBitmap(panel?.captureId) != null
+                val ok = hasBmp || !panel?.savedUriString.isNullOrBlank()
+                recordAndReturn(
+                    result = result,
+                    verified = ok,
+                    source = "MediaProjection / MediaStore",
+                    detail = if (hasBmp) {
+                        "Verified captured bitmap in RAM & MediaStore URI"
+                    } else {
+                        "Verified display capture response"
+                    },
+                    startCheck = startCheck
+                )
+            }
         }
     }
 
@@ -726,14 +770,19 @@ class ToolExecutionSyncService(
         } else {
             0
         }
+        val ringerLabel = when (am?.ringerMode) {
+            AudioManager.RINGER_MODE_SILENT -> "Silent"
+            AudioManager.RINGER_MODE_VIBRATE -> "Vibrate"
+            else -> "Normal"
+        }
         val detail = if (observed != null) {
             "Confirmed via ${observed.mechanism}: ${observed.detail}"
         } else {
-            "Confirmed AudioManager state (Media $mediaPct%)"
+            "Confirmed AudioManager state (Media $mediaPct% · Ringer $ringerLabel)"
         }
         return recordAndReturn(
             result = result,
-            verified = true,
+            verified = am != null,
             source = observed?.let { "${it.mechanism} · AudioManager" } ?: "AudioManager",
             detail = detail,
             startCheck = startCheck

@@ -849,9 +849,11 @@ class MoteViewModel(
                     ChatGenUiToolProtocol.decodeToolInvocation(rawJson)
                 }
 
-                // Filter to registered operations; if the LLM emitted zero supported tools,
-                // deterministically plan & execute the chain so clock/phone/camera/wifi/cursor commands never fail silently.
-                val validDecodedInvocations = decodedInvocations.filter {
+                // Expand any runToolChain meta-invocations first, then filter to registered operations;
+                // if the LLM emitted zero supported tools, deterministically plan & execute the chain
+                // so clock/phone/camera/wifi/cursor commands never fail silently.
+                val expandedInvocations = localModelManager.toolOrchestrator.expandInvocations(decodedInvocations)
+                val validDecodedInvocations = expandedInvocations.filter {
                     localModelManager.toolRegistry.isOperationSupported(it.tool)
                 }
                 val plannedInvocations = if (validDecodedInvocations.isEmpty() && attachedBitmap == null) {

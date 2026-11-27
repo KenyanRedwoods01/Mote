@@ -821,8 +821,10 @@ class SequentialToolOrchestrator(
             }
 
             // 8. Alarm creation / update / toggle / deletion / listing
+            // Exclude "alarm volume" so AudioManager volume adjustments route cleanly to section 10b2!
             if (GenUiToolRegistry.TOOL_ALARM_MANAGER in enabledToolIds &&
-                (lower.contains("alarm") || lower.contains("wake me"))
+                (lower.contains("alarm") || lower.contains("wake me")) &&
+                !lower.contains("volume")
             ) {
                 when {
                     lower.contains("snooze") || lower.contains("delay") || lower.contains("push") || lower.contains("shift") -> {
@@ -857,6 +859,23 @@ class SequentialToolOrchestrator(
                             )
                         )
                     }
+                    lower.contains("update") || lower.contains("change") || lower.contains("edit") || lower.contains("reschedule") || lower.contains("move") -> {
+                        val parsedTime = parseHourMinute(lower)
+                        val label = extractAlarmLabel(clause)
+                        planned.add(
+                            ChatToolInvocation(
+                                tool = "updateAlarm",
+                                args = buildJsonObject {
+                                    if (!label.isNullOrBlank()) put("query", JsonPrimitive(label))
+                                    if (parsedTime != null) {
+                                        put("hour", JsonPrimitive(parsedTime.first))
+                                        put("minute", JsonPrimitive(parsedTime.second))
+                                    }
+                                    put("enabled", JsonPrimitive(true))
+                                }
+                            )
+                        )
+                    }
                     lower.contains("turn off") || lower.contains("disable") || lower.contains("unset") -> {
                         val query = if (lower.contains("all")) "all" else extractAlarmLabel(clause) ?: ""
                         planned.add(
@@ -881,14 +900,23 @@ class SequentialToolOrchestrator(
                             )
                         )
                     }
+                    lower.contains("toggle") -> {
+                        val query = if (lower.contains("all")) "all" else extractAlarmLabel(clause) ?: ""
+                        planned.add(
+                            ChatToolInvocation(
+                                tool = "toggleAlarm",
+                                args = buildJsonObject { put("query", JsonPrimitive(query)) }
+                            )
+                        )
+                    }
                     lower.contains("list") || lower.contains("show") || lower.contains("what alarm") || lower.contains("my alarm") -> {
                         planned.add(ChatToolInvocation("listAlarms", JsonObject(emptyMap())))
                     }
                     else -> {
-                        val relativeMatch = Regex("""in\s+(\d+)\s*(minutes?|mins?|m|hours?|hrs?|h)\b""").find(lower)
+                        val relativeMatch = Regex("""(?:in\s+)?(\d+)\s*(minutes?|mins?|m|hours?|hrs?|h)\b""").find(lower)
                         val parsedTime = parseHourMinute(lower)
                         val label = extractAlarmLabel(clause) ?: "Alarm"
-                        if (relativeMatch != null && parsedTime == null) {
+                        if (relativeMatch != null && (lower.contains("in ") || parsedTime == null)) {
                             val amount = relativeMatch.groupValues[1].toIntOrNull() ?: 5
                             val isHours = relativeMatch.groupValues[2].startsWith("h")
                             val mins = if (isHours) amount * 60 else amount
@@ -927,21 +955,25 @@ class SequentialToolOrchestrator(
                 (lower.contains("timer") || lower.contains("countdown"))
             ) {
                 when {
-                    lower.contains("pause") -> planned.add(ChatToolInvocation("pauseTimer", JsonObject(emptyMap())))
-                    lower.contains("resume") -> planned.add(ChatToolInvocation("resumeTimer", JsonObject(emptyMap())))
-                    lower.contains("reset") -> planned.add(ChatToolInvocation("resetTimer", JsonObject(emptyMap())))
-                    lower.contains("delete") || lower.contains("cancel") || lower.contains("stop") || lower.contains("clear") ->
+                    lower.contains("pause") || lower.contains("stop") ->
+                        planned.add(ChatToolInvocation("pauseTimer", JsonObject(emptyMap())))
+                    lower.contains("resume") || lower.contains("continue") ->
+                        planned.add(ChatToolInvocation("resumeTimer", JsonObject(emptyMap())))
+                    lower.contains("reset") || lower.contains("restart") ->
+                        planned.add(ChatToolInvocation("resetTimer", JsonObject(emptyMap())))
+                    lower.contains("delete") || lower.contains("cancel") || lower.contains("remove") || lower.contains("clear") ->
                         planned.add(ChatToolInvocation("deleteTimer", JsonObject(emptyMap())))
                     lower.contains("status") || lower.contains("left") || lower.contains("remaining") || lower.contains("how much") ->
                         planned.add(ChatToolInvocation("getTimerStatus", JsonObject(emptyMap())))
                     else -> {
                         val secs = parseDurationSeconds(lower) ?: 300
+                        val timerLabel = extractAlarmLabel(clause) ?: "Timer"
                         planned.add(
                             ChatToolInvocation(
                                 tool = "startTimer",
                                 args = buildJsonObject {
                                     put("durationSeconds", JsonPrimitive(secs))
-                                    put("label", JsonPrimitive("Timer"))
+                                    put("label", JsonPrimitive(timerLabel))
                                 }
                             )
                         )
@@ -950,21 +982,89 @@ class SequentialToolOrchestrator(
                 continue
             }
 
-            // 10. Stopwatch (supports "stopwatch", "stop watch", "record lap")
+            // 10. Stopwatch (supports "stopwatch", "stop watch", "record lap", "clear laps", "list laps")
             if (GenUiToolRegistry.TOOL_STOPWATCH in enabledToolIds &&
-                (lower.contains("stopwatch") || lower.contains("stop watch") || Regex("""\b(lap|split)\b""").containsMatchIn(lower))
+                (lower.contains("stopwatch") || lower.contains("stop watch") || Regex("""\b(lap|laps|split)\b""").containsMatchIn(lower))
             ) {
                 val op = when {
-                    lower.contains("clear lap") || lower.contains("delete lap") -> "clearLaps"
-                    lower.contains("list lap") || lower.contains("show lap") -> "listLaps"
+                    lower.contains("clear lap") || lower.contains("delete lap") || lower.contains("reset lap") -> "clearLaps"
+                    lower.contains("list lap") || lower.contains("show lap") || lower.contains("my lap") -> "listLaps"
                     lower.contains("pause") || Regex("""\bstop\s+(the\s+)?stop\s*watch\b""").containsMatchIn(lower) ||
-                        (lower.contains("stop") && !lower.contains("start") && !lower.contains("stop watch")) -> "pauseStopwatch"
+                        (Regex("""\bstop\b""").containsMatchIn(lower) && !lower.contains("start") && !lower.contains("stop watch")) -> "pauseStopwatch"
                     lower.contains("lap") || lower.contains("split") -> "lapStopwatch"
                     lower.contains("reset") || lower.contains("clear") -> "resetStopwatch"
                     lower.contains("status") || lower.contains("elapsed") || lower.contains("how long") -> "getStopwatchStatus"
                     else -> "startStopwatch"
                 }
                 planned.add(ChatToolInvocation(op, JsonObject(emptyMap())))
+                continue
+            }
+
+            // 10a. Calendar Events (add / update / delete / list)
+            if (GenUiToolRegistry.TOOL_CALENDAR in enabledToolIds &&
+                (lower.contains("calendar") || lower.contains("event") || lower.contains("schedule a meeting") || lower.contains("meeting"))
+            ) {
+                when {
+                    lower.contains("delete") || lower.contains("cancel") || lower.contains("remove") -> {
+                        val query = if (lower.contains("all")) "all" else extractAlarmLabel(clause) ?: ""
+                        planned.add(
+                            ChatToolInvocation(
+                                tool = "deleteEvent",
+                                args = buildJsonObject { put("query", JsonPrimitive(query)) }
+                            )
+                        )
+                    }
+                    lower.contains("list") || lower.contains("show") || lower.contains("what's on") || lower.contains("my schedule") -> {
+                        val dateFilter = when {
+                            lower.contains("today") -> "today"
+                            lower.contains("tomorrow") -> "tomorrow"
+                            else -> null
+                        }
+                        planned.add(
+                            ChatToolInvocation(
+                                tool = "listEvents",
+                                args = buildJsonObject {
+                                    if (dateFilter != null) put("date", JsonPrimitive(dateFilter))
+                                }
+                            )
+                        )
+                    }
+                    lower.contains("update") || lower.contains("reschedule") || lower.contains("move") -> {
+                        val parsedTime = parseHourMinute(lower)
+                        planned.add(
+                            ChatToolInvocation(
+                                tool = "updateEvent",
+                                args = buildJsonObject {
+                                    extractAlarmLabel(clause)?.let { put("query", JsonPrimitive(it)) }
+                                    if (lower.contains("tomorrow")) put("date", JsonPrimitive("tomorrow"))
+                                    if (parsedTime != null) {
+                                        put("startTime", JsonPrimitive(String.format(Locale.US, "%02d:%02d", parsedTime.first, parsedTime.second)))
+                                    }
+                                }
+                            )
+                        )
+                    }
+                    else -> {
+                        val parsedTime = parseHourMinute(lower)
+                        val dateStr = if (lower.contains("tomorrow")) "tomorrow" else "today"
+                        val title = extractAlarmLabel(clause)
+                            ?: Regex("""(?:add|create|schedule)\s+(?:a\s+)?(?:calendar\s+)?(?:event|meeting)\s+(?:called\s+|named\s+|for\s+)?(.+?)(?:\s+(?:at|on|today|tomorrow)\b|$)""", RegexOption.IGNORE_CASE)
+                                .find(clause)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotBlank() }
+                            ?: "Calendar Event"
+                        planned.add(
+                            ChatToolInvocation(
+                                tool = "addEvent",
+                                args = buildJsonObject {
+                                    put("title", JsonPrimitive(title))
+                                    put("date", JsonPrimitive(dateStr))
+                                    if (parsedTime != null) {
+                                        put("startTime", JsonPrimitive(String.format(Locale.US, "%02d:%02d", parsedTime.first, parsedTime.second)))
+                                    }
+                                }
+                            )
+                        )
+                    }
+                }
                 continue
             }
 
@@ -1171,7 +1271,7 @@ class SequentialToolOrchestrator(
                 }
             }
 
-            // 13. Maps Navigation
+            // 13. Maps, URL, Settings & System Global Navigation
             if (GenUiToolRegistry.TOOL_NAVIGATION in enabledToolIds) {
                 val navMatch = Regex("""(?:navigate|directions)\s+to\s+(.+)""", RegexOption.IGNORE_CASE).find(clause)
                 if (navMatch != null) {
@@ -1179,6 +1279,51 @@ class SequentialToolOrchestrator(
                         ChatToolInvocation(
                             tool = "navigateMaps",
                             args = buildJsonObject { put("destination", JsonPrimitive(navMatch.groupValues[1].trim())) }
+                        )
+                    )
+                    continue
+                }
+                val urlMatch = Regex("""(https?://\S+|www\.\S+|[a-z0-9-]+\.(?:com|org|net|io|dev|ai)(?:/\S*)?)""", RegexOption.IGNORE_CASE).find(clause)
+                if (urlMatch != null && (lower.contains("open") || lower.contains("visit") || lower.contains("go to") || lower.contains("browse"))) {
+                    planned.add(
+                        ChatToolInvocation(
+                            tool = "openUrl",
+                            args = buildJsonObject { put("url", JsonPrimitive(urlMatch.groupValues[1].trim())) }
+                        )
+                    )
+                    continue
+                }
+                if (lower.contains("settings")) {
+                    val section = when {
+                        lower.contains("bluetooth") -> "bluetooth"
+                        lower.contains("display") || lower.contains("brightness") -> "display"
+                        lower.contains("sound") || lower.contains("audio") -> "sound"
+                        lower.contains("battery") -> "battery"
+                        lower.contains("accessibility") -> "accessibility"
+                        lower.contains("app") -> "apps"
+                        else -> "main"
+                    }
+                    planned.add(
+                        ChatToolInvocation(
+                            tool = "openSettings",
+                            args = buildJsonObject { put("section", JsonPrimitive(section)) }
+                        )
+                    )
+                    continue
+                }
+                val sysNavAction = when {
+                    Regex("""\bgo\s+back\b""").containsMatchIn(lower) -> "back"
+                    Regex("""\bgo\s+home\b""").containsMatchIn(lower) -> "home"
+                    lower.contains("notification shade") || lower.contains("open notifications") -> "notifications"
+                    lower.contains("quick settings") -> "quick_settings"
+                    lower.contains("recents") || lower.contains("app switcher") -> "recents"
+                    else -> null
+                }
+                if (sysNavAction != null) {
+                    planned.add(
+                        ChatToolInvocation(
+                            tool = "navigateSystem",
+                            args = buildJsonObject { put("action", JsonPrimitive(sysNavAction)) }
                         )
                     )
                     continue
@@ -1712,15 +1857,24 @@ class SequentialToolOrchestrator(
     }
 
     private fun parseHourMinute(lower: String): Pair<Int, Int>? {
-        val match = Regex("""\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\b""").find(lower)
+        // 1. Match explicit clock time with colon or AM/PM (e.g. "7:30", "7:30 pm", "6 am", "19:45")
+        val explicitMatch = Regex("""\b(\d{1,2})(?::(\d{2})\s*(am|pm|a\.m\.|p\.m\.)?|\s*(am|pm|a\.m\.|p\.m\.))\b""").find(lower)
+        if (explicitMatch != null) {
+            var hour = explicitMatch.groupValues[1].toIntOrNull() ?: return null
+            val minute = explicitMatch.groupValues[2].toIntOrNull() ?: 0
+            val meridiem = (explicitMatch.groupValues[3].ifEmpty { explicitMatch.groupValues[4] })
+                .lowercase(Locale.US).replace(".", "")
+            if (hour > 23 || minute > 59) return null
+            if (meridiem == "pm" && hour in 1..11) hour += 12
+            if (meridiem == "am" && hour == 12) hour = 0
+            return hour to minute
+        }
+        // 2. Match bare hour after "at" / "for" / "to" only when NOT followed by duration units (mins/hours/secs)
+        val bareAtMatch = Regex("""\b(?:at|for|to)\s+(\d{1,2})\b(?!\s*(?:m|min|mins|minute|minutes|h|hr|hrs|hour|hours|s|sec|secs|second|seconds)\b)""").find(lower)
             ?: return null
-        var hour = match.groupValues[1].toIntOrNull() ?: return null
-        val minute = match.groupValues[2].toIntOrNull() ?: 0
-        val meridiem = match.groupValues[3].lowercase(Locale.US).replace(".", "")
-        if (hour > 23 || minute > 59) return null
-        if (meridiem == "pm" && hour in 1..11) hour += 12
-        if (meridiem == "am" && hour == 12) hour = 0
-        return hour to minute
+        val hour = bareAtMatch.groupValues[1].toIntOrNull() ?: return null
+        if (hour !in 0..23) return null
+        return hour to 0
     }
 
     private fun parseDurationSeconds(lower: String): Int? {

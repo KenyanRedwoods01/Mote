@@ -255,7 +255,7 @@ class HybridAiRouter {
             ),
             "explanation" to Schema.string(description = "Short explanation shown after answering quiz_card"),
             "actionType" to Schema.enumeration(
-                values = listOf("NONE", "SET_BRIGHTNESS", "TOGGLE_DND", "START_TIMER", "COPY_TEXT", "PASTE_REPLY", "SEND_MESSAGE"),
+                values = listOf("NONE", "SET_BRIGHTNESS", "SET_VOLUME", "TOGGLE_DND", "START_TIMER", "COPY_TEXT", "PASTE_REPLY", "SEND_MESSAGE"),
                 description = "Allowlisted Android device action"
             ),
             "requiresConfirm" to Schema.boolean(description = "Whether explicit confirmation is highlighted")
@@ -327,8 +327,13 @@ class HybridAiRouter {
             msg.contains("ondevice") ||
             msg.contains("aicore") ||
             msg.contains("function_declarations") ||
+            msg.contains("functiondeclaration") ||
             msg.contains("function calling") ||
             msg.contains("tools") ||
+            msg.contains("invalid_argument") ||
+            msg.contains("invalid argument") ||
+            msg.contains("schema") ||
+            msg.contains("properties") ||
             msg.contains("unsupported")
     }
 

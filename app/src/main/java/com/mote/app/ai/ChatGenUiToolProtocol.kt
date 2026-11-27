@@ -2,11 +2,14 @@ package com.mote.app.ai
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -625,15 +628,25 @@ object ChatGenUiToolProtocol {
         }
     }
 
-    fun JsonObject.str(key: String): String? = this[key]?.jsonPrimitive?.contentOrNull
+    fun JsonObject.str(key: String): String? =
+        (this[key] as? JsonPrimitive)?.contentOrNull
+
     fun JsonObject.intVal(key: String): Int? {
-        val prim = this[key]?.jsonPrimitive ?: return null
+        val prim = this[key] as? JsonPrimitive ?: return null
         return prim.intOrNull
             ?: prim.doubleOrNull?.toInt()
             ?: prim.contentOrNull?.trim()?.toDoubleOrNull()?.toInt()
     }
+
+    fun JsonObject.floatVal(key: String): Float? {
+        val prim = this[key] as? JsonPrimitive ?: return null
+        return prim.floatOrNull
+            ?: prim.doubleOrNull?.toFloat()
+            ?: prim.contentOrNull?.trim()?.toFloatOrNull()
+    }
+
     fun JsonObject.boolVal(key: String): Boolean? {
-        val prim = this[key]?.jsonPrimitive ?: return null
+        val prim = this[key] as? JsonPrimitive ?: return null
         prim.booleanOrNull?.let { return it }
         return when (prim.contentOrNull?.trim()?.lowercase()) {
             "true", "1", "yes", "on" -> true
@@ -641,8 +654,19 @@ object ChatGenUiToolProtocol {
             else -> null
         }
     }
-    fun JsonObject.strList(key: String): List<String> =
-        this[key]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty()
+
+    fun JsonObject.strList(key: String): List<String> {
+        val el = this[key] ?: return emptyList()
+        return when (el) {
+            is JsonArray -> el.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotEmpty) }
+            is JsonPrimitive -> el.contentOrNull
+                ?.split(',', ';')
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                .orEmpty()
+            else -> emptyList()
+        }
+    }
 
     private fun findPartialOpenTagStart(text: String, fromIndex: Int): Int {
         val maxCheck = minOf(OPEN_TAG.length - 1, text.length - fromIndex)

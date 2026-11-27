@@ -535,9 +535,12 @@ class CalendarToolsManager(context: Context) {
 
     private fun addOneHour(startHm: String): String {
         val parts = startHm.split(":")
-        val h = ((parts.getOrNull(0)?.toIntOrNull() ?: 9) + 1).coerceAtMost(23)
-        val m = (parts.getOrNull(1)?.toIntOrNull() ?: 0).coerceIn(0, 59)
-        return String.format(Locale.US, "%02d:%02d", h, m)
+        val startH = (parts.getOrNull(0)?.toIntOrNull() ?: 9).coerceIn(0, 23)
+        val startM = (parts.getOrNull(1)?.toIntOrNull() ?: 0).coerceIn(0, 59)
+        if (startH >= 23) {
+            return "23:59"
+        }
+        return String.format(Locale.US, "%02d:%02d", startH + 1, startM)
     }
 
     private fun parseDateTimeMillis(dateIso: String, timeHm: String): Long {

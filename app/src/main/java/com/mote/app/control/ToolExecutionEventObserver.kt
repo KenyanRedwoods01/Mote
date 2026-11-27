@@ -87,6 +87,7 @@ class AndroidSystemEventObserver(context: Context) : SystemActionEventObserver {
     private var observerThread: HandlerThread? = null
     private var observerHandler: Handler? = null
     private var brightnessObserver: ContentObserver? = null
+    private var systemSettingsObserver: ContentObserver? = null
     private var calendarObserver: ContentObserver? = null
     private var systemBroadcastReceiver: BroadcastReceiver? = null
     private var clipListener: ClipboardManager.OnPrimaryClipChangedListener? = null
@@ -202,6 +203,46 @@ class AndroidSystemEventObserver(context: Context) : SystemActionEventObserver {
             )
         }
 
+        // 2b. ContentObserver for Settings.System descendants (volume_* streams & next_alarm_formatted)
+        // Ensures reliable verification even on Android 14-16 OEMs that throttle VOLUME_CHANGED_ACTION.
+        val settingsObs = object : ContentObserver(handler) {
+            override fun onChange(selfChange: Boolean, uri: Uri?) {
+                val seg = uri?.lastPathSegment?.lowercase().orEmpty()
+                when {
+                    seg.contains("volume") || seg.contains("ringer") || seg.contains("mute") -> {
+                        val musicVol = runCatching { audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) }.getOrNull()
+                        val maxVol = runCatching { audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) }.getOrNull()
+                        val detail = if (musicVol != null && maxVol != null && maxVol > 0) {
+                            val pct = (musicVol * 100) / maxVol
+                            "Settings.System ($seg) confirmed · Media=$pct% ($musicVol/$maxVol)"
+                        } else {
+                            "Settings.System audio key updated ($seg)"
+                        }
+                        emitEvent(
+                            category = SystemEventCategory.AUDIO_VOLUME,
+                            mechanism = "ContentObserver",
+                            detail = detail
+                        )
+                    }
+                    seg.contains("alarm") -> {
+                        emitEvent(
+                            category = SystemEventCategory.ALARM_CLOCK,
+                            mechanism = "ContentObserver",
+                            detail = "Settings.System alarm schedule updated ($seg)"
+                        )
+                    }
+                }
+            }
+        }
+        systemSettingsObserver = settingsObs
+        runCatching {
+            appContext.contentResolver.registerContentObserver(
+                Settings.System.CONTENT_URI,
+                true,
+                settingsObs
+            )
+        }
+
         // 3. ContentObserver for CalendarContract.Events (registered when permission is granted)
         ensureCalendarObserverRegistered()
 
@@ -285,6 +326,8 @@ class AndroidSystemEventObserver(context: Context) : SystemActionEventObserver {
         systemBroadcastReceiver = null
         brightnessObserver?.let { runCatching { appContext.contentResolver.unregisterContentObserver(it) } }
         brightnessObserver = null
+        systemSettingsObserver?.let { runCatching { appContext.contentResolver.unregisterContentObserver(it) } }
+        systemSettingsObserver = null
         calendarObserver?.let { runCatching { appContext.contentResolver.unregisterContentObserver(it) } }
         calendarObserver = null
         calendarObserverAttached.set(false)

@@ -187,6 +187,18 @@ class ClockToolsManager(context: Context) {
         )
     }
 
+    suspend fun toggleAlarmByQuery(queryOrId: String?): ClockToolExecutionOutcome {
+        val current = dao.getAllAlarmsOnce()
+        if (current.isEmpty()) {
+            return ClockToolExecutionOutcome(
+                summary = "No alarms found to toggle.",
+                success = false
+            )
+        }
+        val target = findMatchingAlarm(current, queryOrId) ?: current.first()
+        return setAlarmEnabled(target.id, !target.enabled)
+    }
+
     suspend fun updateAlarm(
         queryOrId: String?,
         newHour: Int?,
@@ -532,14 +544,23 @@ class ClockToolsManager(context: Context) {
                 )
             }
             "resume", "start" -> {
+                val restoredRemaining = if (target.remainingSeconds > 0) target.remainingSeconds else target.totalSeconds.coerceAtLeast(1)
                 _timers.update { items ->
                     items.map {
-                        if (it.id == target.id && it.remainingSeconds > 0) it.copy(isRunning = true, isFinished = false) else it
+                        if (it.id == target.id) {
+                            it.copy(
+                                remainingSeconds = restoredRemaining,
+                                isRunning = true,
+                                isFinished = false
+                            )
+                        } else {
+                            it
+                        }
                     }
                 }
                 ensureTimerTickerRunning()
                 ClockToolExecutionOutcome(
-                    summary = "Resumed '${target.label}' (${formatDurationSeconds(target.remainingSeconds)} remaining)",
+                    summary = "Resumed '${target.label}' (${formatDurationSeconds(restoredRemaining)} remaining)",
                     success = true,
                     targetTimerId = target.id
                 )
@@ -744,7 +765,9 @@ class ClockToolsManager(context: Context) {
         stopwatchTickerJob = scope.launch {
             while (isActive && _stopwatch.value.isRunning) {
                 val nowElapsed = stopwatchBaseElapsedMs + (SystemClock.elapsedRealtime() - stopwatchStartedAtMs)
-                _stopwatch.update { it.copy(elapsedMs = nowElapsed) }
+                _stopwatch.update { state ->
+                    if (!state.isRunning) state else state.copy(elapsedMs = nowElapsed)
+                }
                 delay(50L)
             }
             stopwatchTickerJob = null
@@ -857,10 +880,35 @@ class ClockToolsManager(context: Context) {
         }
 
         /**
-         * Parses flexible time strings such as "7:30 AM", "19:45", "6 am", "07:05 pm", "8.15pm".
+         * Parses relative offset strings such as "in 5 minutes", "in 2 hours", "15 mins".
+         */
+        fun parseRelativeMinutes(raw: String?): Int? {
+            val text = raw?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotBlank() } ?: return null
+            if (text.contains(":") || text.contains("am") || text.contains("pm") || text.contains("a.m") || text.contains("p.m")) {
+                return null
+            }
+            val match = Regex("""(?:in\s+)?(\d+)\s*(hours?|hrs?|h|minutes?|mins?|m)\b""").find(text) ?: return null
+            val amount = match.groupValues[1].toIntOrNull() ?: return null
+            val unit = match.groupValues[2]
+            val mins = if (unit.startsWith("h")) amount * 60 else amount
+            return mins.takeIf { it > 0 }
+        }
+
+        /**
+         * Parses flexible clock time strings such as "7:30 AM", "19:45", "6 am", "07:05 pm", "8.15pm".
+         * Deliberately ignores relative durations like "in 5 minutes" so they aren't misread as 5:00 AM.
          */
         fun parseFlexibleTime(raw: String?): Pair<Int, Int>? {
             val text = raw?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotBlank() } ?: return null
+            if (text.startsWith("in ") && !text.contains(":") && !Regex("""\b(?:am|pm|a\.m\.|p\.m\.)\b""").containsMatchIn(text)) {
+                return null
+            }
+            if (Regex("""\b\d+\s*(?:minutes?|mins?|seconds?|secs?|hours?|hrs?)\b""").containsMatchIn(text) &&
+                !text.contains(":") &&
+                !Regex("""\b(?:am|pm|a\.m\.|p\.m\.)\b""").containsMatchIn(text)
+            ) {
+                return null
+            }
             val regex = Regex("""\b(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\b""")
             val match = regex.find(text) ?: return null
             var hour = match.groupValues[1].toIntOrNull() ?: return null

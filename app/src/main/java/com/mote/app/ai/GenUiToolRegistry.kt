@@ -3,6 +3,7 @@ package com.mote.app.ai
 import android.content.Context
 import android.media.AudioManager
 import com.mote.app.ai.ChatGenUiToolProtocol.boolVal
+import com.mote.app.ai.ChatGenUiToolProtocol.floatVal
 import com.mote.app.ai.ChatGenUiToolProtocol.intVal
 import com.mote.app.ai.ChatGenUiToolProtocol.str
 import com.mote.app.ai.ChatGenUiToolProtocol.strList
@@ -173,14 +174,17 @@ class AndroidAlarmManagerTool(
 
     override suspend fun execute(operation: String, args: JsonObject): GenUiToolResult {
         val op = operation.lowercase(Locale.US)
-        val parsedStrTime = ClockToolsManager.parseFlexibleTime(
-            args.str("time") ?: args.str("alarmTime") ?: args.str("at")
-        )
+        val rawTimeStr = args.str("time") ?: args.str("alarmTime") ?: args.str("newTime") ?: args.str("at")
+        val parsedStrTime = ClockToolsManager.parseFlexibleTime(rawTimeStr)
+        val parsedStrRelativeMins = ClockToolsManager.parseRelativeMinutes(rawTimeStr)
         return when (op) {
             "addalarm", "setalarm", "set_alarm", "createalarm", "create_alarm", "alarm", "schedulealarm", "clock_create_alarm" -> {
-                val relativeMins = args.intVal("inMinutes") ?: args.intVal("offsetMinutes")
+                val relativeMins = args.intVal("inMinutes") ?: args.intVal("offsetMinutes") ?: parsedStrRelativeMins
                 if (relativeMins != null && relativeMins > 0 && args.intVal("hour") == null && parsedStrTime == null) {
-                    val res = clockTools.createRelativeAlarm(relativeMins, args.str("label") ?: "Alarm")
+                    val res = clockTools.createRelativeAlarm(
+                        relativeMins,
+                        args.str("label") ?: args.str("name") ?: args.str("title") ?: "Alarm"
+                    )
                     GenUiToolResult(
                         toolId = descriptor.id,
                         operation = "addAlarm",
@@ -299,10 +303,29 @@ class AndroidAlarmManagerTool(
                 query = args.str("query") ?: args.str("id") ?: args.str("label"),
                 enabled = false
             )
-            "togglealarm", "toggle_alarm", "clock_toggle_alarm" -> toggleAlarm(
-                query = args.str("query") ?: args.str("id") ?: args.str("label"),
-                enabled = args.boolVal("enabled") ?: false
-            )
+            "togglealarm", "toggle_alarm", "clock_toggle_alarm" -> {
+                val query = args.str("query") ?: args.str("id") ?: args.str("label")
+                val explicitEnabled = args.boolVal("enabled")
+                if (explicitEnabled != null) {
+                    toggleAlarm(query = query, enabled = explicitEnabled)
+                } else {
+                    val res = clockTools.toggleAlarmByQuery(query)
+                    GenUiToolResult(
+                        toolId = descriptor.id,
+                        operation = "toggleAlarm",
+                        success = res.success,
+                        feedback = res.summary,
+                        uiPart = InChatUiPart.ClockAlarmsPanel(
+                            partId = nextPartId(),
+                            actionSummary = res.summary,
+                            highlightAlarmId = res.targetAlarmId,
+                            success = res.success,
+                            alarmManagerMode = res.alarmManagerMode
+                        ),
+                        createdRecordId = res.targetAlarmId
+                    )
+                }
+            }
             "listalarms", "list_alarms", "showalarms", "getalarms", "clock_list_alarms" -> listAlarms()
             else -> GenUiToolResult(
                 toolId = descriptor.id,
@@ -451,7 +474,7 @@ class CountdownTimerTool(
                     ?: ClockToolsManager.parseFlexibleDurationSeconds(args.str("duration") ?: args.str("time"))
                 val computedSecs = explicitSecs ?: run {
                     val h = args.intVal("hours") ?: 0
-                    val m = args.intVal("minutes") ?: 0
+                    val m = args.intVal("minutes") ?: args.intVal("durationMinutes") ?: 0
                     val s = args.intVal("seconds") ?: 0
                     val sum = h * 3600 + m * 60 + s
                     if (sum > 0) sum else 300
@@ -637,7 +660,8 @@ class AndroidCalendarTool(
                 highlightEventId = res.targetEventId,
                 success = res.success,
                 calendarSyncMode = res.calendarSyncMode
-            )
+            ),
+            createdRecordId = res.targetEventId
         )
     }
 
@@ -662,7 +686,8 @@ class AndroidCalendarTool(
                 highlightEventId = res.targetEventId,
                 success = res.success,
                 calendarSyncMode = res.calendarSyncMode
-            )
+            ),
+            createdRecordId = res.targetEventId
         )
     }
 
@@ -794,9 +819,12 @@ class CameraControlTool(
                 deviceTools.openCamera(mode = "video", facing = args.str("facing"), timerSeconds = timerSec)
             }
             else -> {
+                if (mode.equals("selfie", ignoreCase = true) || mode.equals("front", ignoreCase = true)) {
+                    facing = "front"
+                }
                 deviceTools.openCamera(
-                    mode = mode,
-                    facing = args.str("facing"),
+                    mode = if (mode.equals("video", ignoreCase = true)) "video" else "photo",
+                    facing = args.str("facing") ?: if (facing == "front") "front" else null,
                     timerSeconds = timerSec
                 )
             }
@@ -1552,8 +1580,8 @@ class AppControlCursorTool : GenUiTool {
                 )
             }
             "hovertapcoordinates", "tapcoordinates", "clickcoordinates", "longpress" -> {
-                val x = args["x"]?.toString()?.toFloatOrNull() ?: 0.5f
-                val y = args["y"]?.toString()?.toFloatOrNull() ?: 0.5f
+                val x = args.floatVal("x") ?: 0.5f
+                val y = args.floatVal("y") ?: 0.5f
                 val label = args.str("label") ?: "Screen Point"
                 val longPress = op == "longpress" || (args.boolVal("longPress") == true)
                 val hoverOnly = args.boolVal("hoverOnly") == true
@@ -1975,6 +2003,13 @@ class GenUiToolRegistry(
                     BackgroundVerificationResult(
                         verified = len > 0,
                         detail = if (len > 0) "Verified OCR output buffer ($len chars ready for chaining)" else "OCR output buffer empty"
+                    )
+                } else if (op.contains("context") || op == "readscreen") {
+                    val panel = result.uiPart as? InChatUiPart.ScreenCapturePanel
+                    val hasText = !panel?.detailLines.isNullOrEmpty() || !panel?.summary.isNullOrBlank()
+                    BackgroundVerificationResult(
+                        verified = hasText,
+                        detail = if (hasText) "Verified redacted Accessibility screen context" else "Screen context returned empty"
                     )
                 } else {
                     val panel = result.uiPart as? InChatUiPart.ScreenCapturePanel
