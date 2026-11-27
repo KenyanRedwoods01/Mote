@@ -108,6 +108,11 @@ class IncrementalJsonStreamParser {
     private val completedBlocks = mutableListOf<String>()
     private var partialJsonChunksBuffered = 0
 
+    val currentVisibleText: String
+        get() = visibleBuffer.toString()
+            .replace(Regex("\n{3,}"), "\n\n")
+            .trimStart()
+
     /**
      * Feeds the next raw streaming chunk from Gemini (or local LiteRT-LM) and returns a clean,
      * monotonic [IncrementalStreamSnapshot] ready to update the chat UI immediately.
@@ -243,15 +248,20 @@ class IncrementalJsonStreamParser {
                 return index + 1
             }
 
-            // Exact match for fenced ```json block header
-            if (buf.equals(FENCE_JSON_HEADER, ignoreCase = true)) {
+            // Exact match for fenced ```json or ```\n block header
+            if (buf.equals(FENCE_JSON_HEADER, ignoreCase = true) ||
+                buf == "```\n" || buf == "```\r" || buf == "```{"
+            ) {
                 pendingControlBuffer.clear()
                 resetJsonBufferState()
                 mode = Mode.FENCED_JSON
+                if (buf == "```{") {
+                    processFencedJsonChar('{')
+                }
                 return index + 1
             }
 
-            // Exact match for bare inline {"tool": start
+            // Exact match for bare inline {"tool": / {"name": / {"title": / {"widgets": start
             if (isBareToolPrefixMatch(buf)) {
                 if (isBareToolConfirmed(buf)) {
                     val existing = pendingControlBuffer.toString()
@@ -265,7 +275,10 @@ class IncrementalJsonStreamParser {
             }
 
             // Still a valid prefix of OPEN_TAG or FENCE_JSON_HEADER? Keep buffering!
-            if (OPEN_TAG.startsWith(buf) || FENCE_JSON_HEADER.startsWith(buf, ignoreCase = true)) {
+            if (OPEN_TAG.startsWith(buf) ||
+                FENCE_JSON_HEADER.startsWith(buf, ignoreCase = true) ||
+                buf == "`" || buf == "``" || buf == "```"
+            ) {
                 return index + 1
             }
 
@@ -392,13 +405,18 @@ class IncrementalJsonStreamParser {
 
     private fun isBareToolPrefixMatch(buf: String): Boolean {
         val compact = buf.filterNot { it.isWhitespace() }
-        return BARE_TOOL_MARKER.startsWith(compact, ignoreCase = true) ||
-            compact.startsWith(BARE_TOOL_MARKER, ignoreCase = true)
+        if (compact.isEmpty()) return false
+        return BARE_JSON_MARKERS.any { marker ->
+            marker.startsWith(compact, ignoreCase = true) ||
+                compact.startsWith(marker, ignoreCase = true)
+        }
     }
 
     private fun isBareToolConfirmed(buf: String): Boolean {
         val compact = buf.filterNot { it.isWhitespace() }
-        return compact.startsWith(BARE_TOOL_MARKER, ignoreCase = true)
+        return BARE_JSON_MARKERS.any { marker ->
+            compact.startsWith(marker, ignoreCase = true)
+        }
     }
 
     private fun stripClosingTagAndFences(raw: String): String {
@@ -406,6 +424,7 @@ class IncrementalJsonStreamParser {
             .removePrefix(OPEN_TAG)
             .removeSuffix(CLOSE_TAG)
             .removePrefix("```json")
+            .removePrefix("```JSON")
             .removePrefix("```")
             .removeSuffix("```")
             .trim()
@@ -415,7 +434,13 @@ class IncrementalJsonStreamParser {
         if (candidate.isBlank() || !candidate.startsWith("{")) return null
         return try {
             val obj: JsonObject = jsonValidator.parseToJsonElement(candidate).jsonObject
-            if (obj.containsKey("tool")) candidate else null
+            if (obj.containsKey("tool") || obj.containsKey("name") || obj.containsKey("function") ||
+                (obj.containsKey("title") && obj.containsKey("widgets"))
+            ) {
+                ChatGenUiToolProtocol.normalizeToolOrGenUiJson(candidate)
+            } else {
+                null
+            }
         } catch (_: Exception) {
             null
         }
@@ -423,7 +448,11 @@ class IncrementalJsonStreamParser {
 
     private fun tryRecoverTruncatedToolJson(candidate: String): String? {
         val trimmed = candidate.trim()
-        if (!trimmed.startsWith("{") || !trimmed.contains("\"tool\"")) return null
+        if (!trimmed.startsWith("{")) return null
+        val looksLikeToolOrGenUi = trimmed.contains("\"tool\"") ||
+            trimmed.contains("\"name\"") ||
+            (trimmed.contains("\"title\"") && trimmed.contains("\"widgets\""))
+        if (!looksLikeToolOrGenUi) return null
         var attempt = trimmed
         repeat(4) {
             attempt = "$attempt}"
@@ -500,7 +529,13 @@ class IncrementalJsonStreamParser {
         private const val OPEN_TAG = ChatGenUiToolProtocol.OPEN_TAG
         private const val CLOSE_TAG = ChatGenUiToolProtocol.CLOSE_TAG
         private const val FENCE_JSON_HEADER = "```json"
-        private const val BARE_TOOL_MARKER = "{\"tool\":"
+        private val BARE_JSON_MARKERS = listOf(
+            "{\"tool\":",
+            "{\"name\":",
+            "{\"function\":",
+            "{\"title\":",
+            "{\"widgets\":"
+        )
     }
 }
 

@@ -289,6 +289,34 @@ object FirebaseNativeToolDeclarations {
             )
         }
 
+        if (GenUiToolRegistry.TOOL_AUDIO_VOLUME in enabledToolIds) {
+            declarations += FunctionDeclaration(
+                name = "setVolume",
+                description = "Set Android AudioManager stream volume percentage (0-100) for media, ring, alarm, or notification.",
+                parameters = mapOf(
+                    "percent" to Schema.integer("Target volume percentage (0-100)"),
+                    "stream" to Schema.enumeration(listOf("media", "ring", "alarm", "notification", "voice"), "Audio stream")
+                ),
+                optionalParameters = listOf("stream")
+            )
+            declarations += FunctionDeclaration(
+                name = "adjustVolume",
+                description = "Raise, lower, mute, or unmute Android volume.",
+                parameters = mapOf(
+                    "direction" to Schema.enumeration(listOf("up", "down", "mute", "unmute"), "Adjustment direction"),
+                    "stream" to Schema.enumeration(listOf("media", "ring", "alarm", "notification"), "Audio stream")
+                ),
+                optionalParameters = listOf("stream")
+            )
+            declarations += FunctionDeclaration(
+                name = "setRingerMode",
+                description = "Switch Android ringer mode between normal, vibrate, and silent.",
+                parameters = mapOf(
+                    "mode" to Schema.enumeration(listOf("normal", "vibrate", "silent"), "Target ringer mode")
+                )
+            )
+        }
+
         if (GenUiToolRegistry.TOOL_APP_CONTROL in enabledToolIds) {
             declarations += FunctionDeclaration(
                 name = "hoverAndClick",

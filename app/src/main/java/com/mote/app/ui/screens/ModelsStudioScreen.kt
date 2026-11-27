@@ -50,7 +50,8 @@ fun ModelsStudioScreen(
     viewModel: MoteViewModel,
     isGuest: Boolean,
     onSelectPersonaForChat: (String) -> Unit,
-    onOpenChatTab: () -> Unit = {}
+    onOpenChatTab: () -> Unit = {},
+    onOpenHealthDashboard: () -> Unit = {}
 ) {
     val botsState by viewModel.botsState.collectAsStateWithLifecycle()
     val llmConfig by viewModel.llmConfig.collectAsStateWithLifecycle()
@@ -344,21 +345,47 @@ fun ModelsStudioScreen(
 
             // 1b. Unified 'System Health & Inference' Dashboard (Battery Temp, Thermal Throttling, Hybrid Mode & EventObserver)
             item(key = "system_health_inference_dashboard") {
-                SystemHealthInferenceDashboard(
-                    health = systemHealth,
-                    batteryTelemetry = batteryTelemetry,
-                    selectedHybridMode = MoteInferenceMode.fromString(studioPrefs.hybridInferenceMode),
-                    aiCoreStatus = aiCoreStatus,
-                    adaptiveEnabled = studioPrefs.adaptiveThermalBatteryRouting,
-                    lastRouteNote = lastAdaptiveRouteNote,
-                    observedEvents = observedSystemEvents,
-                    onToggleAdaptive = { viewModel.setAdaptiveThermalBatteryRouting(it) },
-                    onSelectHybridMode = { viewModel.setHybridInferenceMode(it) },
-                    onRefresh = {
-                        viewModel.refreshSystemHealth()
-                        viewModel.refreshBatteryTelemetry()
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SystemHealthInferenceDashboard(
+                        health = systemHealth,
+                        batteryTelemetry = batteryTelemetry,
+                        selectedHybridMode = MoteInferenceMode.fromString(studioPrefs.hybridInferenceMode),
+                        aiCoreStatus = aiCoreStatus,
+                        adaptiveEnabled = studioPrefs.adaptiveThermalBatteryRouting,
+                        lastRouteNote = lastAdaptiveRouteNote,
+                        observedEvents = observedSystemEvents,
+                        onToggleAdaptive = { viewModel.setAdaptiveThermalBatteryRouting(it) },
+                        onSelectHybridMode = { viewModel.setHybridInferenceMode(it) },
+                        onRefresh = {
+                            viewModel.refreshSystemHealth()
+                            viewModel.refreshBatteryTelemetry()
+                        }
+                    )
+                    OutlinedButton(
+                        onClick = onOpenHealthDashboard,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("models_open_full_health_dashboard_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.MonitorHeart,
+                            contentDescription = null,
+                            tint = CloudFlashCobalt,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "Open Full System Health & EventObserver Dashboard",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MoteNavy,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
-                )
+                }
             }
 
             // 2. Real-Time Battery & Thermal Resource Monitor (alerts on excessive draw during active inference)

@@ -12,7 +12,11 @@ All contributors are expected to follow our [Code of Conduct](./CODE_OF_CONDUCT.
 
 ## Development Setup
 
-1. **Fork & Clone** the repository.
+1. **Fork & Clone** the repository ([KenyanRedwoods01/Mote](https://github.com/KenyanRedwoods01/Mote)):
+   ```bash
+   git clone git@github.com:KenyanRedwoods01/Mote.git
+   cd Mote
+   ```
 2. Open the project in **Android Studio** (JDK 17, Android SDK 36).
 3. Configure a Firebase development project with **Firebase AI Logic**, **App Check** (debug token registered), **Firebase Auth**, and **Cloud Firestore**, and place your `google-services.json` into `app/`.
 4. Verify your local build:

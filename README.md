@@ -184,8 +184,12 @@ During the `#BuildHybridAI` competition sprint, Mote was significantly upgraded 
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/<your-username>/mote-hybrid-ai-android.git
-cd mote-hybrid-ai-android
+# Clone via SSH
+git clone git@github.com:KenyanRedwoods01/Mote.git
+cd Mote
+
+# Or clone via HTTPS
+# git clone https://github.com/KenyanRedwoods01/Mote.git
 ```
 
 ### 2. Configure Firebase
@@ -247,7 +251,7 @@ Mote follows strict Google Play least-privilege principles:
 │       │   ├── AiCoreNanoManager.kt          # AICore / ML Kit GenAI Prompt API status & download
 │       │   ├── FirebaseNativeToolDeclarations.kt # Official Tool.functionDeclarations schema
 │       │   ├── SequentialToolOrchestrator.kt # Multi-step tool chaining & truth-in-execution guard
-│       │   └── GenUiToolRegistry.kt          # 13+ Android tool families
+│       │   └── GenUiToolRegistry.kt          # 15 Android tool families (Clock, Audio, Camera, Cursor, etc.)
 │       ├── control/
 │       │   ├── ToolExecutionSyncService.kt   # Post-execution verification engine
 │       │   ├── ToolExecutionEventObserver.kt # BroadcastReceiver & ContentObserver hooks

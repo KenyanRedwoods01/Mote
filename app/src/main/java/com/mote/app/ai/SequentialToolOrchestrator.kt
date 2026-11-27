@@ -988,6 +988,63 @@ class SequentialToolOrchestrator(
                 continue
             }
 
+            // 10b2. AudioManager Volume & Ringer Mode Tools
+            if (lower.contains("volume") || lower.contains("vibrate mode") || lower.contains("silent mode") ||
+                lower.contains("ringer") || Regex("""\b(mute|unmute)\b""").containsMatchIn(lower)
+            ) {
+                val stream = when {
+                    lower.contains("alarm") -> "alarm"
+                    lower.contains("ring") -> "ring"
+                    lower.contains("notification") -> "notification"
+                    lower.contains("call") -> "voice"
+                    else -> "media"
+                }
+                val pctMatch = Regex("""(\d{1,3})\s*%?""").find(lower)
+                when {
+                    lower.contains("vibrate") -> planned.add(
+                        ChatToolInvocation("setRingerMode", buildJsonObject { put("mode", JsonPrimitive("vibrate")) })
+                    )
+                    lower.contains("silent mode") -> planned.add(
+                        ChatToolInvocation("setRingerMode", buildJsonObject { put("mode", JsonPrimitive("silent")) })
+                    )
+                    lower.contains("normal mode") || lower.contains("ringer normal") -> planned.add(
+                        ChatToolInvocation("setRingerMode", buildJsonObject { put("mode", JsonPrimitive("normal")) })
+                    )
+                    lower.contains("unmute") -> planned.add(
+                        ChatToolInvocation("adjustVolume", buildJsonObject {
+                            put("direction", JsonPrimitive("unmute"))
+                            put("stream", JsonPrimitive(stream))
+                        })
+                    )
+                    lower.contains("mute") -> planned.add(
+                        ChatToolInvocation("adjustVolume", buildJsonObject {
+                            put("direction", JsonPrimitive("mute"))
+                            put("stream", JsonPrimitive(stream))
+                        })
+                    )
+                    lower.contains("up") || lower.contains("louder") || lower.contains("increase") || lower.contains("raise") -> planned.add(
+                        ChatToolInvocation("adjustVolume", buildJsonObject {
+                            put("direction", JsonPrimitive("up"))
+                            put("stream", JsonPrimitive(stream))
+                        })
+                    )
+                    lower.contains("down") || lower.contains("quieter") || lower.contains("decrease") || lower.contains("lower") -> planned.add(
+                        ChatToolInvocation("adjustVolume", buildJsonObject {
+                            put("direction", JsonPrimitive("down"))
+                            put("stream", JsonPrimitive(stream))
+                        })
+                    )
+                    pctMatch != null -> planned.add(
+                        ChatToolInvocation("setVolume", buildJsonObject {
+                            put("percent", JsonPrimitive(pctMatch.groupValues[1].toInt().coerceIn(0, 100)))
+                            put("stream", JsonPrimitive(stream))
+                        })
+                    )
+                    else -> planned.add(ChatToolInvocation("getVolumeStatus", JsonObject(emptyMap())))
+                }
+                continue
+            }
+
             // 10c. Application Control & Real-Time Cursor Hover Tools
             if (lower.contains("inspect screen") || lower.contains("screen elements") || lower.contains("list buttons") || lower.contains("ui elements")) {
                 planned.add(ChatToolInvocation("inspectScreenElements", JsonObject(emptyMap())))

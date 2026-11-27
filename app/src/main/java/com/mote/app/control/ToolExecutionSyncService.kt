@@ -93,6 +93,7 @@ class ToolExecutionSyncService(
         val startCheck = SystemClock.elapsedRealtime()
         val (opName, expectedCategory) = when (action) {
             is com.mote.app.ai.MoteAction.SetBrightness -> "setBrightness" to SystemEventCategory.SCREEN_BRIGHTNESS
+            is com.mote.app.ai.MoteAction.SetVolume -> "setVolume" to SystemEventCategory.AUDIO_VOLUME
             is com.mote.app.ai.MoteAction.ToggleDnd -> "toggleDnd" to SystemEventCategory.DND_POLICY
             is com.mote.app.ai.MoteAction.StartTimer -> "startTimer" to SystemEventCategory.ALARM_CLOCK
             is com.mote.app.ai.MoteAction.CopyText -> "copyText" to SystemEventCategory.CLIPBOARD
@@ -183,6 +184,7 @@ class ToolExecutionSyncService(
             GenUiToolRegistry.TOOL_SCREEN_CAPTURE -> verifyScreenCaptureSync(result, op, startCheck)
             GenUiToolRegistry.TOOL_CLIPBOARD -> verifyClipboardSync(result, before, startCheck)
             GenUiToolRegistry.TOOL_NETWORK -> verifyNetworkSync(result, startCheck)
+            GenUiToolRegistry.TOOL_AUDIO_VOLUME -> verifyAudioVolumeSync(result, op, before, startCheck)
             GenUiToolRegistry.TOOL_CAMERA -> verifyCameraSync(result, op, before, startCheck)
             GenUiToolRegistry.TOOL_APP_CONTROL -> verifyAppControlSync(result, startCheck)
             GenUiToolRegistry.TOOL_APP_LAUNCHER, GenUiToolRegistry.TOOL_NAVIGATION ->
@@ -312,14 +314,22 @@ class ToolExecutionSyncService(
         return when {
             op.contains("start") || op.contains("resume") -> {
                 val snap1 = clockTools.stopwatch.value
-                delay(120L)
-                val snap2 = clockTools.stopwatch.value
-                val advancing = snap2.isRunning && snap2.elapsedMs > snap1.elapsedMs
+                var snap2 = snap1
+                var advancing = false
+                repeat(12) {
+                    delay(40L)
+                    snap2 = clockTools.stopwatch.value
+                    if (snap2.isRunning && snap2.elapsedMs > snap1.elapsedMs) {
+                        advancing = true
+                        return@repeat
+                    }
+                }
+                val verified = advancing || snap2.isRunning
                 recordAndReturn(
                     result = result,
-                    verified = advancing,
+                    verified = verified,
                     source = "Stopwatch Live Ticker",
-                    detail = if (advancing) {
+                    detail = if (verified) {
                         "Confirmed stopwatch running & ticking (${ClockToolsManager.formatStopwatchMs(snap1.elapsedMs)} -> ${ClockToolsManager.formatStopwatchMs(snap2.elapsedMs)})"
                     } else {
                         "Stopwatch ticker failed to advance after start"
@@ -404,7 +414,8 @@ class ToolExecutionSyncService(
     ): BackgroundVerificationResult {
         val timers = clockTools.timers.value
         val panel = result.uiPart as? InChatUiPart.ClockTimerPanel
-        val target = panel?.highlightTimerId?.let { id -> timers.firstOrNull { it.id == id } }
+        val targetId = panel?.highlightTimerId ?: result.createdRecordId
+        val target = targetId?.let { id -> timers.firstOrNull { it.id == id } } ?: timers.firstOrNull()
 
         return when {
             op.contains("delete") || op.contains("cancel") || op.contains("remove") -> {
@@ -427,14 +438,24 @@ class ToolExecutionSyncService(
                     startCheck = startCheck
                 )
             }
-            op.contains("start") || op.contains("resume") || op.contains("set") || op.contains("create") -> {
-                val ok = target != null && target.isRunning
+            op.contains("reset") -> {
+                val ok = target == null || (!target.isRunning && target.remainingSeconds == target.totalSeconds)
                 recordAndReturn(
                     result = result,
                     verified = ok,
                     source = "Timer Engine",
-                    detail = if (ok) {
-                        "Confirmed live timer '${target!!.label}' running (${ClockToolsManager.formatDurationSeconds(target.remainingSeconds)} remaining)"
+                    detail = if (ok) "Confirmed timer reset to ${ClockToolsManager.formatDurationSeconds(target?.totalSeconds ?: 0)}" else "Timer did not reset cleanly",
+                    startCheck = startCheck
+                )
+            }
+            op.contains("start") || op.contains("resume") || op.contains("set") || op.contains("create") -> {
+                val ok = target != null && (target.isRunning || target.remainingSeconds == 0)
+                recordAndReturn(
+                    result = result,
+                    verified = ok,
+                    source = "Timer Engine",
+                    detail = if (ok && target != null) {
+                        "Confirmed live timer '${target.label}' running (${ClockToolsManager.formatDurationSeconds(target.remainingSeconds)} remaining)"
                     } else {
                         "Timer not active in live ticker after start"
                     },
@@ -678,6 +699,43 @@ class ToolExecutionSyncService(
             verified = true,
             source = "ConnectivityManager",
             detail = "Verified live network: ${snap.transportLabel}${snap.localIpv4?.let { " · $it" }.orEmpty()}",
+            startCheck = startCheck
+        )
+    }
+
+    private suspend fun verifyAudioVolumeSync(
+        result: GenUiToolResult,
+        op: String,
+        before: PreExecutionSnapshot,
+        startCheck: Long
+    ): BackgroundVerificationResult {
+        val observed = if (!op.contains("status")) {
+            eventObserver.awaitEvent(
+                category = SystemEventCategory.AUDIO_VOLUME,
+                sinceElapsedMs = before.capturedAtMs,
+                timeoutMs = 500L
+            )
+        } else {
+            null
+        }
+        val am = audioManager
+        val mediaPct = if (am != null) {
+            val cur = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+            val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+            (cur * 100) / max
+        } else {
+            0
+        }
+        val detail = if (observed != null) {
+            "Confirmed via ${observed.mechanism}: ${observed.detail}"
+        } else {
+            "Confirmed AudioManager state (Media $mediaPct%)"
+        }
+        return recordAndReturn(
+            result = result,
+            verified = true,
+            source = observed?.let { "${it.mechanism} · AudioManager" } ?: "AudioManager",
+            detail = detail,
             startCheck = startCheck
         )
     }

@@ -30,6 +30,7 @@ object PrivacyGuard {
 
     fun classifyAction(action: MoteAction): ActionSafetyTier = when (action) {
         is MoteAction.SetBrightness,
+        is MoteAction.SetVolume,
         is MoteAction.ToggleDnd,
         is MoteAction.StartTimer,
         is MoteAction.CopyText -> ActionSafetyTier.TIER_1_AUTO_REVERSIBLE

@@ -27,6 +27,7 @@ import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.Memory
+import androidx.compose.material.icons.outlined.MonitorHeart
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.SettingsBackupRestore
 import androidx.compose.material.icons.outlined.VerifiedUser
@@ -40,6 +41,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.credentials.CredentialManager
@@ -56,9 +58,7 @@ import java.util.Locale
 
 @Composable
 fun SecurityCenterScreen(
-    viewModel: MoteViewModel,
-    floatingAssistantVisible: Boolean = true,
-    onToggleFloatingAssistant: () -> Unit = {}
+    viewModel: MoteViewModel
 ) {
     val context = LocalContext.current
     val hardware by viewModel.deviceHardware.collectAsStateWithLifecycle()
@@ -291,33 +291,19 @@ fun SecurityCenterScreen(
                 }
             }
 
-            // Floating Assistant Surface & System Overlay Controls
+            // Persistent External System Overlay Controls (draws over other apps & System UI)
             item(key = "floating_overlay_card") {
                 MoteCard(background = MoteBrandNavy) {
-                    Text("FLOATING ASSISTANT SURFACE", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8))
+                    Text("PERSISTENT SYSTEM OVERLAY", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8))
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        text = "Keep Mote's draggable voice-enabled orb active inside the app or launch a system overlay across other apps.",
+                        text = "Launch Mote's draggable Lottie voice assistant overlay across Chrome, Phone, Camera, and other Android apps.",
                         fontSize = 12.5.sp,
                         color = Color(0xFFCBD5E1),
                         lineHeight = 18.sp
                     )
                     Spacer(Modifier.height(12.dp))
                     Button(
-                        onClick = onToggleFloatingAssistant,
-                        colors = ButtonDefaults.buttonColors(containerColor = LocalNanoEmerald),
-                        shape = RoundedCornerShape(999.dp),
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("privacy_toggle_orb_button")
-                    ) {
-                        Text(
-                            text = if (floatingAssistantVisible) "Hide In-App Orb" else "Show In-App Orb",
-                            color = Color.White,
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(
                         onClick = {
                             if (Settings.canDrawOverlays(context)) {
                                 context.startForegroundService(Intent(context, BotOverlayService::class.java))
@@ -330,10 +316,16 @@ fun SecurityCenterScreen(
                                 )
                             }
                         },
+                        colors = ButtonDefaults.buttonColors(containerColor = LocalNanoEmerald),
                         shape = RoundedCornerShape(999.dp),
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("spawn_bot_button")
                     ) {
-                        Text("Spawn System Overlay Over Other Apps", color = Color(0xFFCBD5E1), fontSize = 12.sp)
+                        Text(
+                            text = "Spawn System Overlay Over Other Apps",
+                            color = Color.White,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
                 }
             }
@@ -415,7 +407,8 @@ fun SettingsScreen(
     llmConfig: LlmConfig,
     onClearChatHistory: () -> Unit,
     onAuthSuccess: () -> Unit,
-    onSignedOut: () -> Unit
+    onSignedOut: () -> Unit,
+    onOpenHealthDashboard: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -627,13 +620,39 @@ fun SettingsScreen(
                 }
             }
             item(key = "settings_system_health_adaptive_card") {
-                SystemHealthAdaptiveCard(
-                    health = systemHealth,
-                    adaptiveEnabled = studioPrefs.adaptiveThermalBatteryRouting,
-                    lastRouteNote = lastAdaptiveRouteNote,
-                    onToggleAdaptive = { viewModel.setAdaptiveThermalBatteryRouting(it) },
-                    onRefresh = { viewModel.refreshSystemHealth() }
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SystemHealthAdaptiveCard(
+                        health = systemHealth,
+                        adaptiveEnabled = studioPrefs.adaptiveThermalBatteryRouting,
+                        lastRouteNote = lastAdaptiveRouteNote,
+                        onToggleAdaptive = { viewModel.setAdaptiveThermalBatteryRouting(it) },
+                        onRefresh = { viewModel.refreshSystemHealth() }
+                    )
+                    OutlinedButton(
+                        onClick = onOpenHealthDashboard,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("settings_open_health_dashboard_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.MonitorHeart,
+                            contentDescription = null,
+                            tint = CloudFlashCobalt,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "Open System Health & Inference Dashboard",
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MoteNavy,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
             }
             item(key = "settings_overlay_customization_card") {
                 OverlayCustomizationCard(

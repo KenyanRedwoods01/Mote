@@ -5,15 +5,20 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.provider.AlarmClock
 import android.provider.Settings
 import com.mote.app.ai.MoteAction
 import com.mote.app.service.MoteAccessibilityService
 
-class DeviceActionExecutor(private val context: Context) {
+class DeviceActionExecutor(
+    private val context: Context,
+    private val clockTools: ClockToolsManager? = null
+) {
 
     fun execute(action: MoteAction): Boolean = when (action) {
         is MoteAction.SetBrightness -> setBrightness(action.percent)
+        is MoteAction.SetVolume -> setVolume(action.percent, action.stream)
         is MoteAction.ToggleDnd -> setDnd(action.enabled)
         is MoteAction.StartTimer -> startTimer(action.minutes, action.label)
         is MoteAction.CopyText -> copyToClipboard(action.text)
@@ -30,6 +35,22 @@ class DeviceActionExecutor(private val context: Context) {
         }.isSuccess
     }
 
+    private fun setVolume(percent: Int, stream: String): Boolean {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return false
+        val streamType = when (stream.lowercase()) {
+            "ring", "ringer" -> AudioManager.STREAM_RING
+            "alarm" -> AudioManager.STREAM_ALARM
+            "notification", "notif" -> AudioManager.STREAM_NOTIFICATION
+            "voice", "call" -> AudioManager.STREAM_VOICE_CALL
+            else -> AudioManager.STREAM_MUSIC
+        }
+        return runCatching {
+            val maxVol = am.getStreamMaxVolume(streamType).coerceAtLeast(1)
+            val targetVol = ((percent.coerceIn(0, 100) / 100f) * maxVol).toInt().coerceIn(0, maxVol)
+            am.setStreamVolume(streamType, targetVol, AudioManager.FLAG_SHOW_UI)
+        }.isSuccess
+    }
+
     private fun setDnd(enabled: Boolean): Boolean {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (!nm.isNotificationPolicyAccessGranted) return false
@@ -39,8 +60,16 @@ class DeviceActionExecutor(private val context: Context) {
     }
 
     private fun startTimer(minutes: Int, label: String): Boolean {
+        val seconds = minutes.coerceIn(1, 180) * 60
+        if (clockTools != null) {
+            val result = clockTools.startTimer(
+                durationSeconds = seconds,
+                label = label.ifBlank { "Focus Timer" }
+            )
+            if (result.success) return true
+        }
         val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
-            putExtra(AlarmClock.EXTRA_LENGTH, minutes.coerceIn(1, 180) * 60)
+            putExtra(AlarmClock.EXTRA_LENGTH, seconds)
             putExtra(AlarmClock.EXTRA_MESSAGE, label)
             putExtra(AlarmClock.EXTRA_SKIP_UI, true)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

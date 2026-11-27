@@ -57,7 +57,7 @@ import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material.icons.rounded.BubbleChart
+import com.mote.app.ai.ChatGenUiToolProtocol
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.*
@@ -185,8 +185,6 @@ fun ChatHubScreen(
     viewModel: MoteViewModel,
     isGuest: Boolean,
     isImeVisible: Boolean,
-    floatingAssistantVisible: Boolean,
-    onToggleFloatingAssistant: () -> Unit,
     onOpenModelsTab: () -> Unit,
     onOpenToolsTab: () -> Unit = {}
 ) {
@@ -220,7 +218,7 @@ fun ChatHubScreen(
     val overlayCustomization by viewModel.overlayCustomization.collectAsStateWithLifecycle()
     val toolPermissions by viewModel.toolPermissions.collectAsStateWithLifecycle()
 
-    val executor = remember(context) { DeviceActionExecutor(context) }
+    val executor = remember(context, viewModel.clockTools) { DeviceActionExecutor(context, viewModel.clockTools) }
     val bots = (botsState as? BotsUiState.Success)?.bots.orEmpty()
     val selectedBot = bots.firstOrNull { it.id == selectedBotId }
         ?: bots.firstOrNull { it.active }
@@ -460,20 +458,6 @@ fun ChatHubScreen(
                 )
             }
 
-            IconButton(
-                onClick = onToggleFloatingAssistant,
-                modifier = Modifier
-                    .size(48.dp)
-                    .testTag("toggle_floating_assistant_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.BubbleChart,
-                    contentDescription = if (floatingAssistantVisible) "Hide floating orb" else "Show floating orb",
-                    tint = if (floatingAssistantVisible) LocalNanoEmerald else SlateMuted,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-
             if (messages.isNotEmpty()) {
                 IconButton(
                     onClick = { viewModel.clearChatHistory() },
@@ -666,13 +650,32 @@ fun ChatHubScreen(
 
             items(messages, key = { it.id }) { msg ->
                 val isAssistant = msg.chatRole() != ChatRole.USER
-                val attachedParts = if (isAssistant) inChatUiPartsByText[msg.text].orEmpty() else emptyList()
+                val (displayText, extractedCard) = remember(msg.id, msg.text, isAssistant) {
+                    if (isAssistant) {
+                        ChatGenUiToolProtocol.tryExtractInlineGenUiCard(msg.text)
+                    } else {
+                        msg.text to null
+                    }
+                }
+                val baseParts = if (isAssistant) inChatUiPartsByText[msg.text].orEmpty() else emptyList()
+                val attachedParts = remember(baseParts, extractedCard, msg.id) {
+                    if (extractedCard != null && baseParts.none { it is InChatUiPart.GenUiCardPart }) {
+                        baseParts + InChatUiPart.GenUiCardPart(
+                            partId = "inline_genui_${msg.id}",
+                            spec = extractedCard
+                        )
+                    } else {
+                        baseParts
+                    }
+                }
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ChatMessageBubble(
-                        message = msg,
-                        onCopy = { text -> copyToClipboard(context, text) },
-                        onReplay = { prompt -> composerText = prompt }
-                    )
+                    if (displayText.isNotBlank() || attachedParts.isEmpty()) {
+                        ChatMessageBubble(
+                            message = msg.copy(text = displayText.ifBlank { msg.text }),
+                            onCopy = { text -> copyToClipboard(context, text) },
+                            onReplay = { prompt -> composerText = prompt }
+                        )
+                    }
                     attachedParts.forEach { part ->
                         InChatUiPartRenderer(
                             part = part,
@@ -733,9 +736,12 @@ fun ChatHubScreen(
                 val streaming = chatStreamState as ChatStreamUiState.Streaming
                 item(key = "live_streaming_bubble") {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val safePartial = remember(streaming.partialText) {
+                            ChatGenUiToolProtocol.extractAndStripRawJsonArtifacts(streaming.partialText).first
+                        }
                         StreamingAssistantBubble(
                             botName = streaming.botName,
-                            partialText = streaming.partialText,
+                            partialText = safePartial,
                             elapsedMs = streaming.elapsedMs,
                             pendingToolHint = streaming.pendingToolHint,
                             onStop = { viewModel.stopStreaming() }

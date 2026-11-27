@@ -13,6 +13,7 @@ import android.os.Looper
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import com.mote.app.security.PrivacyGuard
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.Locale
@@ -168,14 +169,71 @@ class MoteAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * Returns candidate foreground application window roots, prioritizing non-Mote foreground
+     * apps first (so Mote's own overlay or SystemUI never shadows buttons in the target app),
+     * followed by Mote's own window and [rootInActiveWindow].
+     */
+    private fun getTargetApplicationRoots(): List<AccessibilityNodeInfo> {
+        val externalRoots = mutableListOf<AccessibilityNodeInfo>()
+        val selfRoots = mutableListOf<AccessibilityNodeInfo>()
+        runCatching {
+            val allWindows = windows.orEmpty()
+            for (win in allWindows) {
+                if (win.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
+                val r = win.root ?: continue
+                val pkg = r.packageName?.toString().orEmpty()
+                if (pkg == packageName) {
+                    selfRoots += r
+                } else {
+                    externalRoots += r
+                }
+            }
+        }
+        val activeRoot = runCatching { rootInActiveWindow }.getOrNull()
+        val ordered = mutableListOf<AccessibilityNodeInfo>()
+        ordered.addAll(externalRoots)
+        if (activeRoot != null && ordered.none { it == activeRoot } && activeRoot.packageName?.toString() != packageName) {
+            ordered.add(activeRoot)
+        }
+        ordered.addAll(selfRoots)
+        if (activeRoot != null && ordered.none { it == activeRoot }) {
+            ordered.add(activeRoot)
+        }
+        return ordered
+    }
+
+    private fun resolveTapTargetCenter(node: AccessibilityNodeInfo): Pair<Float, Float> {
+        val nodeRect = Rect()
+        node.getBoundsInScreen(nodeRect)
+        var cur: AccessibilityNodeInfo? = node
+        var depth = 0
+        while (cur != null && depth < 4) {
+            if (cur.isClickable) {
+                val r = Rect()
+                cur.getBoundsInScreen(r)
+                if (r.width() > 8 && r.height() > 8 && r.width() < resources.displayMetrics.widthPixels * 0.92f) {
+                    return r.exactCenterX() to r.exactCenterY()
+                }
+            }
+            cur = cur.parent
+            depth++
+        }
+        return nodeRect.exactCenterX() to nodeRect.exactCenterY()
+    }
+
+    /**
      * Enumerates visible interactive elements on the active window so the AI can
      * target real UI controls with the live floating cursor.
      */
     fun inspectInteractiveElements(maxItems: Int = 28): List<ScreenUiNodeInfo> {
         if (PrivacyGuard.isPackageBlocked(currentPackageName)) return emptyList()
-        val root = rootInActiveWindow ?: return emptyList()
+        val roots = getTargetApplicationRoots()
+        if (roots.isEmpty()) return emptyList()
         val results = mutableListOf<ScreenUiNodeInfo>()
-        collectInteractiveNodes(root, results, maxItems)
+        for (root in roots) {
+            if (results.size >= maxItems) break
+            collectInteractiveNodes(root, results, maxItems)
+        }
         return results
     }
 
@@ -230,20 +288,19 @@ class MoteAccessibilityService : AccessibilityService() {
         if (cleanedQuery.isEmpty()) {
             return AppControlActionResult(false, "Missing target label", "Provide a button or element name to hover and click.")
         }
-        val root = rootInActiveWindow
-            ?: return AppControlActionResult(false, "No active app window", "Switch to an app screen before triggering cursor control.")
+        val roots = getTargetApplicationRoots()
+        if (roots.isEmpty()) {
+            return AppControlActionResult(false, "No active app window", "Switch to an app screen before triggering cursor control.")
+        }
 
-        val matched = findBestMatchingNode(root, listOf(cleanedQuery), emptyList())
+        val matched = roots.firstNotNullOfOrNull { findBestMatchingNode(it, listOf(cleanedQuery), emptyList()) }
             ?: return AppControlActionResult(
                 success = false,
                 summary = "Target '$cleanedQuery' not visible",
                 detail = "Could not locate '$cleanedQuery' on ${currentPackageName ?: "the active screen"}."
             )
 
-        val rect = Rect()
-        matched.getBoundsInScreen(rect)
-        val cx = rect.exactCenterX()
-        val cy = rect.exactCenterY()
+        val (cx, cy) = resolveTapTargetCenter(matched)
         val label = matched.text?.toString()?.takeIf { it.isNotBlank() }
             ?: matched.contentDescription?.toString()?.takeIf { it.isNotBlank() }
             ?: cleanedQuery
@@ -254,7 +311,7 @@ class MoteAccessibilityService : AccessibilityService() {
             targetY = cy,
             label = if (hoverOnly) "Hover: $label" else "Click: $label",
             useAccessibilityLayer = true,
-            triggerClickPulse = !hoverOnly
+            triggerClickPulse = false
         )
 
         if (hoverOnly) {
@@ -268,13 +325,25 @@ class MoteAccessibilityService : AccessibilityService() {
             )
         }
 
-        val clickedByNode = clickClickableAncestor(matched)
-        val clicked = if (clickedByNode) true else dispatchTapGesture(cx, cy, longPress = false)
+        val tappedByGesture = SystemCursorOverlayManager.suspendOverlayForTap(
+            restoreContext = this,
+            restoreX = cx,
+            restoreY = cy,
+            restoreLabel = label,
+            useAccessibilityLayer = true
+        ) {
+            dispatchTapGesture(cx, cy, longPress = false)
+        }
+        val clicked = if (tappedByGesture) {
+            true
+        } else {
+            clickClickableAncestorOnMain(matched)
+        }
         return if (clicked) {
             AppControlActionResult(
                 success = true,
                 summary = "Hovered & clicked '$label'",
-                detail = "Animated cursor hovered over '$label' (${cx.toInt()}, ${cy.toInt()}) and executed click.",
+                detail = "Animated cursor hovered over '$label' (${cx.toInt()}, ${cy.toInt()}) and executed tap gesture.",
                 targetX = cx,
                 targetY = cy,
                 matchedLabel = label
@@ -296,8 +365,10 @@ class MoteAccessibilityService : AccessibilityService() {
      * Samsung Phone, and AOSP dialers, visibly glides the real-time cursor onto it, and clicks it.
      */
     suspend fun hoverAndClickDialerCallButton(): AppControlActionResult {
-        val root = rootInActiveWindow
-            ?: return AppControlActionResult(false, "Dialer window not ready", "Open the Phone dialer first so Mote can click the Call button.")
+        val roots = getTargetApplicationRoots()
+        if (roots.isEmpty()) {
+            return AppControlActionResult(false, "Dialer window not ready", "Open the Phone dialer first so Mote can click the Call button.")
+        }
 
         val preferredIdHints = listOf(
             "dialpad_floating_action_button",
@@ -311,13 +382,10 @@ class MoteAccessibilityService : AccessibilityService() {
         )
         val preferredTextHints = listOf("dial", "call", "place call", "voice call", "audio call")
 
-        val matched = findBestMatchingNode(root, preferredTextHints, preferredIdHints)
+        val matched = roots.firstNotNullOfOrNull { findBestMatchingNode(it, preferredTextHints, preferredIdHints) }
         if (matched != null) {
-            val rect = Rect()
-            matched.getBoundsInScreen(rect)
-            if (rect.width() > 8 && rect.height() > 8) {
-                val cx = rect.exactCenterX()
-                val cy = rect.exactCenterY()
+            val (cx, cy) = resolveTapTargetCenter(matched)
+            if (cx > 8f && cy > 8f) {
                 val label = matched.contentDescription?.toString()?.takeIf { it.isNotBlank() }
                     ?: matched.text?.toString()?.takeIf { it.isNotBlank() }
                     ?: "Call Button"
@@ -328,9 +396,18 @@ class MoteAccessibilityService : AccessibilityService() {
                     targetY = cy,
                     label = "Calling · $label",
                     useAccessibilityLayer = true,
-                    triggerClickPulse = true
+                    triggerClickPulse = false
                 )
-                val ok = clickClickableAncestor(matched) || dispatchTapGesture(cx, cy, longPress = false)
+                val tapped = SystemCursorOverlayManager.suspendOverlayForTap(
+                    restoreContext = this,
+                    restoreX = cx,
+                    restoreY = cy,
+                    restoreLabel = label,
+                    useAccessibilityLayer = true
+                ) {
+                    dispatchTapGesture(cx, cy, longPress = false)
+                }
+                val ok = tapped || clickClickableAncestorOnMain(matched)
                 if (ok) {
                     return AppControlActionResult(
                         success = true,
@@ -354,9 +431,17 @@ class MoteAccessibilityService : AccessibilityService() {
             targetY = fallbackY,
             label = "Tap Call FAB",
             useAccessibilityLayer = true,
-            triggerClickPulse = true
+            triggerClickPulse = false
         )
-        val tapped = dispatchTapGesture(fallbackX, fallbackY, longPress = false)
+        val tapped = SystemCursorOverlayManager.suspendOverlayForTap(
+            restoreContext = this,
+            restoreX = fallbackX,
+            restoreY = fallbackY,
+            restoreLabel = "Call FAB",
+            useAccessibilityLayer = true
+        ) {
+            dispatchTapGesture(fallbackX, fallbackY, longPress = false)
+        }
         return AppControlActionResult(
             success = tapped,
             summary = if (tapped) "Tapped Dialer Call FAB" else "Could not tap Call button",
@@ -375,17 +460,16 @@ class MoteAccessibilityService : AccessibilityService() {
      * Locates the active Camera app's shutter/capture button, hovers with the live cursor, and clicks it.
      */
     suspend fun hoverAndClickCameraShutter(): AppControlActionResult {
-        val root = rootInActiveWindow
-            ?: return AppControlActionResult(false, "Camera window not ready", "Open the Camera app first before pressing the shutter.")
+        val roots = getTargetApplicationRoots()
+        if (roots.isEmpty()) {
+            return AppControlActionResult(false, "Camera window not ready", "Open the Camera app first before pressing the shutter.")
+        }
 
         val idHints = listOf("shutter_button", "camera_shutter", "capture_button", "take_photo", "record_button", "shutter")
         val textHints = listOf("take photo", "shutter", "capture", "take picture", "record video", "start recording")
-        val matched = findBestMatchingNode(root, textHints, idHints)
+        val matched = roots.firstNotNullOfOrNull { findBestMatchingNode(it, textHints, idHints) }
         if (matched != null) {
-            val rect = Rect()
-            matched.getBoundsInScreen(rect)
-            val cx = rect.exactCenterX()
-            val cy = rect.exactCenterY()
+            val (cx, cy) = resolveTapTargetCenter(matched)
             val label = matched.contentDescription?.toString()?.takeIf { it.isNotBlank() } ?: "Camera Shutter"
             SystemCursorOverlayManager.animateGlideTo(
                 context = this,
@@ -393,9 +477,18 @@ class MoteAccessibilityService : AccessibilityService() {
                 targetY = cy,
                 label = "Capture · $label",
                 useAccessibilityLayer = true,
-                triggerClickPulse = true
+                triggerClickPulse = false
             )
-            val ok = clickClickableAncestor(matched) || dispatchTapGesture(cx, cy, longPress = false)
+            val tapped = SystemCursorOverlayManager.suspendOverlayForTap(
+                restoreContext = this,
+                restoreX = cx,
+                restoreY = cy,
+                restoreLabel = label,
+                useAccessibilityLayer = true
+            ) {
+                dispatchTapGesture(cx, cy, longPress = false)
+            }
+            val ok = tapped || clickClickableAncestorOnMain(matched)
             return AppControlActionResult(
                 success = ok,
                 summary = if (ok) "Triggered Camera Shutter" else "Camera Shutter click blocked",
@@ -415,9 +508,17 @@ class MoteAccessibilityService : AccessibilityService() {
             targetY = fallbackY,
             label = "Camera Shutter",
             useAccessibilityLayer = true,
-            triggerClickPulse = true
+            triggerClickPulse = false
         )
-        val tapped = dispatchTapGesture(fallbackX, fallbackY, longPress = false)
+        val tapped = SystemCursorOverlayManager.suspendOverlayForTap(
+            restoreContext = this,
+            restoreX = fallbackX,
+            restoreY = fallbackY,
+            restoreLabel = "Camera Shutter",
+            useAccessibilityLayer = true
+        ) {
+            dispatchTapGesture(fallbackX, fallbackY, longPress = false)
+        }
         return AppControlActionResult(
             success = tapped,
             summary = if (tapped) "Tapped Camera Shutter" else "Could not tap shutter",
@@ -448,7 +549,7 @@ class MoteAccessibilityService : AccessibilityService() {
             targetY = py,
             label = label,
             useAccessibilityLayer = true,
-            triggerClickPulse = !hoverOnly
+            triggerClickPulse = false
         )
         if (hoverOnly) {
             return AppControlActionResult(
@@ -460,7 +561,15 @@ class MoteAccessibilityService : AccessibilityService() {
                 matchedLabel = label
             )
         }
-        val ok = dispatchTapGesture(px, py, longPress = longPress)
+        val ok = SystemCursorOverlayManager.suspendOverlayForTap(
+            restoreContext = this,
+            restoreX = px,
+            restoreY = py,
+            restoreLabel = label,
+            useAccessibilityLayer = true
+        ) {
+            dispatchTapGesture(px, py, longPress = longPress)
+        }
         return AppControlActionResult(
             success = ok,
             summary = if (ok) "${if (longPress) "Long-pressed" else "Tapped"} $label" else "Gesture tap failed",
@@ -500,7 +609,9 @@ class MoteAccessibilityService : AccessibilityService() {
             useAccessibilityLayer = true,
             triggerClickPulse = false
         )
-        val swiped = dispatchSwipeGesture(startX, startY, endX, endY, durationMs = 300L)
+        val swiped = SystemCursorOverlayManager.suspendOverlayForTap {
+            dispatchSwipeGesture(startX, startY, endX, endY, durationMs = 300L)
+        }
         SystemCursorOverlayManager.showHoverAndWait(
             context = this,
             targetX = endX,
@@ -618,6 +729,15 @@ class MoteAccessibilityService : AccessibilityService() {
         return null
     }
 
+    private suspend fun clickClickableAncestorOnMain(node: AccessibilityNodeInfo): Boolean {
+        return suspendCancellableCoroutine { cont ->
+            mainHandler.post {
+                val ok = runCatching { clickClickableAncestor(node) }.getOrDefault(false)
+                if (cont.isActive) cont.resume(ok)
+            }
+        }
+    }
+
     private fun clickClickableAncestor(node: AccessibilityNodeInfo): Boolean {
         var cur: AccessibilityNodeInfo? = node
         var depth = 0
@@ -633,26 +753,33 @@ class MoteAccessibilityService : AccessibilityService() {
 
     private suspend fun dispatchTapGesture(x: Float, y: Float, longPress: Boolean): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false
-        val path = Path().apply { moveTo(x, y) }
-        val duration = if (longPress) 580L else 65L
+        val path = Path().apply {
+            moveTo(x, y)
+            lineTo(x + 0.5f, y + 0.5f)
+        }
+        val duration = if (longPress) 650L else 95L
         val stroke = GestureDescription.StrokeDescription(path, 0L, duration)
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
         return suspendCancellableCoroutine { cont ->
-            val dispatched = dispatchGesture(
-                gesture,
-                object : GestureResultCallback() {
-                    override fun onCompleted(gestureDescription: GestureDescription?) {
-                        if (cont.isActive) cont.resume(true)
-                    }
+            mainHandler.post {
+                val dispatched = runCatching {
+                    dispatchGesture(
+                        gesture,
+                        object : GestureResultCallback() {
+                            override fun onCompleted(gestureDescription: GestureDescription?) {
+                                if (cont.isActive) cont.resume(true)
+                            }
 
-                    override fun onCancelled(gestureDescription: GestureDescription?) {
-                        if (cont.isActive) cont.resume(false)
-                    }
-                },
-                null
-            )
-            if (!dispatched && cont.isActive) {
-                cont.resume(false)
+                            override fun onCancelled(gestureDescription: GestureDescription?) {
+                                if (cont.isActive) cont.resume(false)
+                            }
+                        },
+                        mainHandler
+                    )
+                }.getOrDefault(false)
+                if (!dispatched && cont.isActive) {
+                    cont.resume(false)
+                }
             }
         }
     }
@@ -672,21 +799,25 @@ class MoteAccessibilityService : AccessibilityService() {
         val stroke = GestureDescription.StrokeDescription(path, 0L, durationMs)
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
         return suspendCancellableCoroutine { cont ->
-            val dispatched = dispatchGesture(
-                gesture,
-                object : GestureResultCallback() {
-                    override fun onCompleted(gestureDescription: GestureDescription?) {
-                        if (cont.isActive) cont.resume(true)
-                    }
+            mainHandler.post {
+                val dispatched = runCatching {
+                    dispatchGesture(
+                        gesture,
+                        object : GestureResultCallback() {
+                            override fun onCompleted(gestureDescription: GestureDescription?) {
+                                if (cont.isActive) cont.resume(true)
+                            }
 
-                    override fun onCancelled(gestureDescription: GestureDescription?) {
-                        if (cont.isActive) cont.resume(false)
-                    }
-                },
-                null
-            )
-            if (!dispatched && cont.isActive) {
-                cont.resume(false)
+                            override fun onCancelled(gestureDescription: GestureDescription?) {
+                                if (cont.isActive) cont.resume(false)
+                            }
+                        },
+                        mainHandler
+                    )
+                }.getOrDefault(false)
+                if (!dispatched && cont.isActive) {
+                    cont.resume(false)
+                }
             }
         }
     }

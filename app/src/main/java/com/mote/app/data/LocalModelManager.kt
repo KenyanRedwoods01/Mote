@@ -264,6 +264,7 @@ class LocalModelManager(context: Context) {
             )
 
     val toolRegistry = GenUiToolRegistry(
+        appContext = appContext,
         clockTools = clockTools,
         calendarTools = calendarTools,
         deviceTools = deviceTools,

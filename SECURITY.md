@@ -38,7 +38,7 @@ Mote interacts with sensitive Android capabilities (Accessibility, Screen Captur
 
 If you discover a security vulnerability in Mote, please report it responsibly rather than opening a public GitHub issue:
 
-1. Use GitHub **Private Vulnerability Reporting** (Security Advisories) on this repository, or email the maintainers directly with `[SECURITY] Mote:` in the subject line.
+1. Use GitHub **Private Vulnerability Reporting** ([Security Advisories](https://github.com/KenyanRedwoods01/Mote/security/advisories)) on `KenyanRedwoods01/Mote`, or contact the maintainers directly with `[SECURITY] Mote:` in the subject line.
 2. Include:
    - Affected Android version, device/emulator model, and app build (`debug`/`release`).
    - Clear reproduction steps or a minimal proof-of-concept.

@@ -16,6 +16,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
@@ -105,6 +106,54 @@ object SystemCursorOverlayManager {
         mainHandler.post {
             cursorView?.triggerClickRipple()
         }
+    }
+
+    /**
+     * Temporarily removes the full-screen cursor overlay from WindowManager while an
+     * AccessibilityService synthetic tap/swipe gesture is dispatched, preventing Android 12-16
+     * InputDispatcher touch-occlusion from dropping the gesture.
+     */
+    suspend fun suspendOverlayForTap(
+        restoreContext: Context? = null,
+        restoreX: Float? = null,
+        restoreY: Float? = null,
+        restoreLabel: String? = null,
+        useAccessibilityLayer: Boolean = true,
+        block: suspend () -> Boolean
+    ): Boolean {
+        suspendCancellableCoroutine<Unit> { cont ->
+            mainHandler.post {
+                hideRunnable?.let { mainHandler.removeCallbacks(it) }
+                hideRunnable = null
+                activeAnimator?.cancel()
+                activeAnimator = null
+                val wm = windowManager
+                val view = cursorView
+                if (wm != null && view != null) {
+                    runCatching { wm.removeViewImmediate(view) }
+                }
+                cursorView = null
+                layoutParams = null
+                if (cont.isActive) cont.resume(Unit)
+            }
+        }
+        // Allow InputDispatcher/SurfaceFlinger 1-2 frames to clear the overlay window
+        delay(50L)
+        val result = block()
+        if (restoreContext != null && restoreX != null && restoreY != null && !restoreLabel.isNullOrBlank()) {
+            showHoverAndWait(
+                context = restoreContext,
+                targetX = restoreX,
+                targetY = restoreY,
+                label = if (result) "Clicked · $restoreLabel" else restoreLabel,
+                useAccessibilityLayer = useAccessibilityLayer,
+                autoHideMs = 1100L
+            )
+            if (result) {
+                mainHandler.postDelayed({ triggerClickPulse() }, 60L)
+            }
+        }
+        return result
     }
 
     fun hideNow() {

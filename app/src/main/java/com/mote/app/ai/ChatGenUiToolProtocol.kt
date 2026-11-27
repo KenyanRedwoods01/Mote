@@ -4,11 +4,14 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 /**
  * Interactive UI parts attached inline to a streaming or completed Chat message
@@ -300,6 +303,13 @@ object ChatGenUiToolProtocol {
         appendLine("- openWifiPanel / openInternetPanel / openNetworkSettings: $OPEN_TAG{\"tool\":\"openWifiPanel\",\"args\":{}}$CLOSE_TAG")
         appendLine()
 
+        appendLine("AUDIO & VOLUME CONTROL TOOL (real Android AudioManager verified by EventObserver BroadcastReceiver):")
+        appendLine("- setVolume: $OPEN_TAG{\"tool\":\"setVolume\",\"args\":{\"percent\":50,\"stream\":\"media|ring|alarm|notification|voice\"}}$CLOSE_TAG")
+        appendLine("- adjustVolume: $OPEN_TAG{\"tool\":\"adjustVolume\",\"args\":{\"direction\":\"up|down|mute|unmute\",\"stream\":\"media\"}}$CLOSE_TAG")
+        appendLine("- setRingerMode: $OPEN_TAG{\"tool\":\"setRingerMode\",\"args\":{\"mode\":\"normal|vibrate|silent\"}}$CLOSE_TAG")
+        appendLine("- getVolumeStatus: $OPEN_TAG{\"tool\":\"getVolumeStatus\",\"args\":{}}$CLOSE_TAG")
+        appendLine()
+
         appendLine("APPLICATION CONTROL & REAL-TIME CURSOR HOVER TOOL (Accessibility live animated cursor over any app):")
         appendLine("- hoverAndClick (visibly glides live floating cursor over UI element and clicks it): $OPEN_TAG{\"tool\":\"hoverAndClick\",\"args\":{\"target\":\"Search\",\"hoverOnly\":false}}$CLOSE_TAG")
         appendLine("- hoverTapCoordinates (glides cursor to screen x/y or 0..1 normalized coords): $OPEN_TAG{\"tool\":\"hoverTapCoordinates\",\"args\":{\"x\":0.5,\"y\":0.5,\"label\":\"Center\",\"longPress\":false}}$CLOSE_TAG")
@@ -430,7 +440,9 @@ object ChatGenUiToolProtocol {
                         "Checking live Wi-Fi & Network state..."
                     partialJson.contains("hover", true) || partialJson.contains("swipe", true) || partialJson.contains("inspectScreen", true) || partialJson.contains("clickCall", true) ->
                         "Gliding real-time Mote cursor..."
-                    partialJson.contains("render_gen_ui", true) ->
+                    partialJson.contains("Volume", true) || partialJson.contains("Ringer", true) || partialJson.contains("muteAudio", true) ->
+                        "Updating Android AudioManager & verifying via EventObserver..."
+                    partialJson.contains("render_gen_ui", true) || partialJson.contains("\"widgets\"", true) ->
                         "Streaming Generative UI widget..."
                     else -> "Executing live tool..."
                 }
@@ -458,17 +470,151 @@ object ChatGenUiToolProtocol {
         return try {
             val cleaned = rawJson
                 .removePrefix("```json")
+                .removePrefix("```JSON")
                 .removePrefix("```")
                 .removeSuffix("```")
                 .trim()
             val obj = json.parseToJsonElement(cleaned).jsonObject
-            val tool = obj["tool"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
-                ?: return null
-            val args = obj["args"]?.jsonObject ?: JsonObject(emptyMap())
-            ChatToolInvocation(tool = tool, args = args)
+            val explicitTool = (obj["tool"] ?: obj["name"] ?: obj["function"])
+                ?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
+            if (explicitTool != null) {
+                val args = (obj["args"] ?: obj["arguments"] ?: obj["parameters"])
+                    ?.let { el -> runCatching { el.jsonObject }.getOrNull() }
+                    ?: JsonObject(emptyMap())
+                return ChatToolInvocation(tool = explicitTool, args = args)
+            }
+            // Auto-wrap raw GenUI card JSON ({"title": "...", "widgets": [...]}) into render_gen_ui
+            if (obj.containsKey("widgets") && obj.containsKey("title")) {
+                return ChatToolInvocation(tool = "render_gen_ui", args = obj)
+            }
+            null
         } catch (_: Exception) {
             null
         }
+    }
+
+    /**
+     * Normalizes any valid tool call JSON or raw GenUI card spec into canonical
+     * `{"tool": "...", "args": {...}}` JSON string so downstream parsers never fail.
+     */
+    fun normalizeToolOrGenUiJson(rawJson: String): String? {
+        val decoded = decodeToolInvocation(rawJson) ?: return null
+        return buildJsonObject {
+            put("tool", decoded.tool)
+            put("args", decoded.args)
+        }.toString()
+    }
+
+    /**
+     * Post-stream safety sweep: extracts and strips any remaining `<<<TOOL_CALL>>>...`,
+     * fenced JSON blocks, or bare balanced JSON objects that represent tool calls or
+     * GenUI cards so raw JSON NEVER leaks into the visible chat bubble.
+     */
+    fun extractAndStripRawJsonArtifacts(rawText: String): Pair<String, List<String>> {
+        if (rawText.isBlank()) return "" to emptyList()
+        val extractedBlocks = mutableListOf<String>()
+        var working = rawText
+
+        // 1. Strip any residual tagged <<<TOOL_CALL>>> ... <<<END_TOOL_CALL>>> blocks
+        val taggedRegex = Regex(
+            "${Regex.escape(OPEN_TAG)}([\\s\\S]*?)(?:${Regex.escape(CLOSE_TAG)}|$)"
+        )
+        working = taggedRegex.replace(working) { m ->
+            val inner = m.groupValues[1].trim()
+            normalizeToolOrGenUiJson(inner)?.let { extractedBlocks += it }
+            ""
+        }
+
+        // 2. Strip fenced ```json ... ``` or ``` ... ``` blocks if they contain tool/GenUI JSON
+        val fencedRegex = Regex("```(?:json|JSON)?\\s*([\\s\\S]*?)```")
+        working = fencedRegex.replace(working) { m ->
+            val inner = m.groupValues[1].trim()
+            val normalized = normalizeToolOrGenUiJson(inner)
+            if (normalized != null) {
+                extractedBlocks += normalized
+                ""
+            } else {
+                m.value
+            }
+        }
+
+        // 3. Scan for bare balanced JSON objects representing tool invocations or GenUI cards
+        val cleaned = StringBuilder()
+        var idx = 0
+        while (idx < working.length) {
+            if (working[idx] == '{') {
+                val endIdx = findBalancedJsonEnd(working, idx)
+                if (endIdx != -1) {
+                    val candidate = working.substring(idx, endIdx + 1)
+                    val normalized = normalizeToolOrGenUiJson(candidate)
+                    if (normalized != null) {
+                        extractedBlocks += normalized
+                        idx = endIdx + 1
+                        continue
+                    }
+                }
+            }
+            cleaned.append(working[idx])
+            idx++
+        }
+
+        val finalText = cleaned.toString()
+            .replace(OPEN_TAG, "")
+            .replace(CLOSE_TAG, "")
+            .replace(Regex("\n{3,}"), "\n\n")
+            .trim()
+        return finalText to extractedBlocks.distinct()
+    }
+
+    /**
+     * Defensive UI-layer helper: strips raw tool/GenUI JSON from any stored or live message text
+     * and extracts an inline [GenUiCardSpec] if a raw GenUI card JSON was embedded in the text.
+     */
+    fun tryExtractInlineGenUiCard(text: String): Pair<String, GenUiCardSpec?> {
+        if (!text.contains("{") && !text.contains(OPEN_TAG)) return text to null
+        val (cleanText, blocks) = extractAndStripRawJsonArtifacts(text)
+        var cardSpec: GenUiCardSpec? = null
+        for (block in blocks) {
+            val inv = decodeToolInvocation(block) ?: continue
+            if (inv.tool.equals("render_gen_ui", ignoreCase = true) ||
+                inv.tool.equals("renderGenUi", ignoreCase = true)
+            ) {
+                val decoded = decodeGenUiSpec(inv.args)
+                if (decoded != null) {
+                    cardSpec = decoded
+                    break
+                }
+            }
+        }
+        return cleanText to cardSpec
+    }
+
+    private fun findBalancedJsonEnd(text: String, startIndex: Int): Int {
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for (i in startIndex until text.length) {
+            val ch = text[i]
+            if (inString) {
+                if (escaped) {
+                    escaped = false
+                } else if (ch == '\\') {
+                    escaped = true
+                } else if (ch == '"') {
+                    inString = false
+                }
+                continue
+            }
+            when (ch) {
+                '"' -> inString = true
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) return i
+                }
+            }
+        }
+        return -1
     }
 
     fun decodeGenUiSpec(args: JsonObject): GenUiCardSpec? {
@@ -480,8 +626,21 @@ object ChatGenUiToolProtocol {
     }
 
     fun JsonObject.str(key: String): String? = this[key]?.jsonPrimitive?.contentOrNull
-    fun JsonObject.intVal(key: String): Int? = this[key]?.jsonPrimitive?.intOrNull
-    fun JsonObject.boolVal(key: String): Boolean? = this[key]?.jsonPrimitive?.booleanOrNull
+    fun JsonObject.intVal(key: String): Int? {
+        val prim = this[key]?.jsonPrimitive ?: return null
+        return prim.intOrNull
+            ?: prim.doubleOrNull?.toInt()
+            ?: prim.contentOrNull?.trim()?.toDoubleOrNull()?.toInt()
+    }
+    fun JsonObject.boolVal(key: String): Boolean? {
+        val prim = this[key]?.jsonPrimitive ?: return null
+        prim.booleanOrNull?.let { return it }
+        return when (prim.contentOrNull?.trim()?.lowercase()) {
+            "true", "1", "yes", "on" -> true
+            "false", "0", "no", "off" -> false
+            else -> null
+        }
+    }
     fun JsonObject.strList(key: String): List<String> =
         this[key]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty()
 

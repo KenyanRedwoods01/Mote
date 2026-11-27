@@ -463,8 +463,9 @@ internal fun GenUiSlider(w: GenUiWidgetSpec, accent: Color, onExecuteAction: (Mo
             value = sliderVal,
             onValueChange = {
                 sliderVal = it
-                if (w.actionType == "SET_BRIGHTNESS") {
-                    onExecuteAction(MoteAction.SetBrightness(it.toInt()))
+                when (w.actionType) {
+                    "SET_BRIGHTNESS" -> onExecuteAction(MoteAction.SetBrightness(it.toInt()))
+                    "SET_VOLUME" -> onExecuteAction(MoteAction.SetVolume(it.toInt()))
                 }
             },
             valueRange = 10f..100f,
@@ -505,6 +506,7 @@ internal fun GenUiActionButton(w: GenUiWidgetSpec, accent: Color, onExecuteActio
                 "COPY_TEXT" -> onExecuteAction(MoteAction.CopyText(w.label))
                 "TOGGLE_DND" -> onExecuteAction(MoteAction.ToggleDnd(w.boolValue ?: true))
                 "SET_BRIGHTNESS" -> onExecuteAction(MoteAction.SetBrightness(w.intValue ?: 30))
+                "SET_VOLUME" -> onExecuteAction(MoteAction.SetVolume(w.intValue ?: 50))
                 "SEND_MESSAGE" -> onExecuteAction(MoteAction.ConfirmSendMessage(w.label))
                 else -> onExecuteAction(MoteAction.CopyText(w.label))
             }

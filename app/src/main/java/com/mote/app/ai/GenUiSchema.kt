@@ -77,7 +77,7 @@ data class GenUiWidgetSpec(
     val comparisonRows: List<GenUiComparisonRow> = emptyList(),
     val correctOptionIndex: Int? = null,
     val explanation: String = "",
-    val actionType: String = "NONE", // SET_BRIGHTNESS | TOGGLE_DND | START_TIMER | COPY_TEXT | PASTE_REPLY | SEND_MESSAGE
+    val actionType: String = "NONE", // SET_BRIGHTNESS | SET_VOLUME | TOGGLE_DND | START_TIMER | COPY_TEXT | PASTE_REPLY | SEND_MESSAGE
     val requiresConfirm: Boolean = false
 )
 
@@ -86,6 +86,7 @@ data class GenUiWidgetSpec(
  */
 sealed interface MoteAction {
     data class SetBrightness(val percent: Int) : MoteAction
+    data class SetVolume(val percent: Int, val stream: String = "media") : MoteAction
     data class ToggleDnd(val enabled: Boolean) : MoteAction
     data class StartTimer(val minutes: Int, val label: String) : MoteAction
     data class CopyText(val text: String) : MoteAction

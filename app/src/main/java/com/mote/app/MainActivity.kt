@@ -44,10 +44,8 @@ import com.mote.app.data.GuestChatHistoryStore
 import com.mote.app.data.LocalModelManager
 import com.mote.app.security.configureAppCheck
 import com.mote.app.service.MediaProjectionConsentBridge
-import com.mote.app.ui.BotsUiState
 import com.mote.app.ui.MoteViewModel
 import com.mote.app.ui.auth.AuthScreen
-import com.mote.app.ui.components.FloatingAssistantView
 import com.mote.app.ui.components.IosCanvas
 import com.mote.app.ui.components.IosFloatingBottomNav
 import com.mote.app.ui.components.moteFloatingTabs
@@ -56,6 +54,7 @@ import com.mote.app.ui.screens.GenUiStudioScreen
 import com.mote.app.ui.screens.ModelsStudioScreen
 import com.mote.app.ui.screens.SecurityCenterScreen
 import com.mote.app.ui.screens.SettingsScreen
+import com.mote.app.ui.screens.SystemHealthInferenceScreen
 import com.mote.app.ui.theme.MoteTheme
 import com.mote.app.ui.theme.ThemePreferenceStore
 import kotlinx.coroutines.launch
@@ -189,31 +188,15 @@ private fun MoteHubHost(
     }
     val localModelManager = remember(context) { LocalModelManager(context) }
     val router = remember { HybridAiRouter() }
-    val executor = remember(context) { DeviceActionExecutor(context) }
     val vm: MoteViewModel = viewModel(
         key = sessionKey,
         factory = MoteViewModel.Factory(store, chatStore, router, localModelManager)
     )
 
-    val botsState by vm.botsState.collectAsStateWithLifecycle()
-    val chatHistoryState by vm.chatHistoryState.collectAsStateWithLifecycle()
-    val chatStreamState by vm.chatStreamState.collectAsStateWithLifecycle()
-    val inChatUiPartsByText by vm.inChatUiPartsByText.collectAsStateWithLifecycle()
-    val clockAlarms by vm.clockAlarms.collectAsStateWithLifecycle()
-    val clockTimers by vm.clockTimers.collectAsStateWithLifecycle()
-    val clockStopwatch by vm.clockStopwatch.collectAsStateWithLifecycle()
-    val calendarEvents by vm.calendarEvents.collectAsStateWithLifecycle()
-    val capturedScreenshots by vm.capturedScreenshots.collectAsStateWithLifecycle()
-    val localModels by vm.localModels.collectAsStateWithLifecycle()
-    val loadedLocalModel by vm.loadedLocalModel.collectAsStateWithLifecycle()
-    val loadingLocalModelId by vm.loadingLocalModelId.collectAsStateWithLifecycle()
-    val preferLoadedLocalChat by vm.preferLoadedLocalChat.collectAsStateWithLifecycle()
-    val aiState by vm.aiState.collectAsStateWithLifecycle()
     val llmConfig by vm.llmConfig.collectAsStateWithLifecycle()
-    val activeBots = (botsState as? BotsUiState.Success)?.bots.orEmpty()
 
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { moteFloatingTabs.size })
-    var showFloatingAssistant by remember { mutableStateOf(true) }
+    var showHealthDashboardScreen by remember { mutableStateOf(false) }
 
     val isImeVisible = WindowInsets.ime.getBottom(density) > 0
     val pagerProgress by remember {
@@ -272,8 +255,6 @@ private fun MoteHubHost(
                     viewModel = vm,
                     isGuest = isGuest,
                     isImeVisible = isImeVisible,
-                    floatingAssistantVisible = showFloatingAssistant,
-                    onToggleFloatingAssistant = { showFloatingAssistant = !showFloatingAssistant },
                     onOpenModelsTab = { navigateToTab(2) },
                     onOpenToolsTab = { navigateToTab(3) }
                 )
@@ -285,12 +266,11 @@ private fun MoteHubHost(
                         vm.selectBot(botId)
                         navigateToTab(0)
                     },
-                    onOpenChatTab = { navigateToTab(0) }
+                    onOpenChatTab = { navigateToTab(0) },
+                    onOpenHealthDashboard = { showHealthDashboardScreen = true }
                 )
                 3 -> SecurityCenterScreen(
-                    viewModel = vm,
-                    floatingAssistantVisible = showFloatingAssistant,
-                    onToggleFloatingAssistant = { showFloatingAssistant = !showFloatingAssistant }
+                    viewModel = vm
                 )
                 else -> SettingsScreen(
                     viewModel = vm,
@@ -299,13 +279,14 @@ private fun MoteHubHost(
                     llmConfig = llmConfig,
                     onClearChatHistory = { vm.clearChatHistory() },
                     onAuthSuccess = onAuthSuccess,
-                    onSignedOut = onSignedOut
+                    onSignedOut = onSignedOut,
+                    onOpenHealthDashboard = { showHealthDashboardScreen = true }
                 )
             }
         }
 
         AnimatedVisibility(
-            visible = !isImeVisible,
+            visible = !isImeVisible && !showHealthDashboardScreen,
             enter = fadeIn(animationSpec = spring(stiffness = 400f)) +
                 slideInVertically(
                     animationSpec = spring(dampingRatio = 0.88f, stiffness = 360f),
@@ -325,60 +306,10 @@ private fun MoteHubHost(
             )
         }
 
-        if (showFloatingAssistant) {
-            FloatingAssistantView(
-                bots = activeBots,
-                aiState = aiState,
-                chatHistoryState = chatHistoryState,
-                isCloudSynced = !isGuest,
-                chatStreamState = chatStreamState,
-                inChatUiPartsByText = inChatUiPartsByText,
-                clockAlarms = clockAlarms,
-                clockTimers = clockTimers,
-                clockStopwatch = clockStopwatch,
-                calendarEvents = calendarEvents,
-                capturedScreenshots = capturedScreenshots,
-                llmConfig = llmConfig,
-                localModels = localModels,
-                loadedLocalModel = loadedLocalModel,
-                loadingLocalModelId = loadingLocalModelId,
-                preferLoadedLocalChat = preferLoadedLocalChat,
-                onSendStreamingChat = { prompt, bot ->
-                    vm.sendStreamingChatMessage(
-                        prompt = prompt,
-                        bot = bot
-                    )
-                },
-                onStopStreaming = { vm.stopStreaming() },
-                onSelectCloudModel = { modelId ->
-                    vm.updateModel(modelId)
-                },
-                onSelectLocalModel = { modelId ->
-                    vm.selectDownloadedModelForChat(modelId)
-                },
-                onOpenModelHub = { navigateToTab(2) },
-                onToggleAlarm = { id, enabled -> vm.toggleClockAlarm(id, enabled) },
-                onShiftAlarmMinutes = { id, delta -> vm.shiftClockAlarmMinutes(id, delta) },
-                onDeleteAlarm = { id -> vm.deleteClockAlarm(id) },
-                onSyncAlarmToSystem = { alarm -> vm.syncClockAlarmToAndroid(alarm) },
-                onControlTimer = { action, timerId -> vm.controlClockTimer(action, timerId) },
-                onAddTimerSeconds = { timerId, extra -> vm.addSecondsToClockTimer(timerId, extra) },
-                onControlStopwatch = { action -> vm.controlClockStopwatch(action) },
-                onDeleteCalendarEvent = { id -> vm.deleteCalendarEvent(id) },
-                onSyncCalendarEventToSystem = { ev -> vm.syncCalendarEventToAndroid(ev) },
-                onAnalyzeScreenshot = { capId, prompt -> vm.analyzeCapturedScreenshot(capId, prompt) },
-                onSubmitPrompt = { prompt, bot ->
-                    vm.generateFocusControlCard(
-                        userPrompt = prompt,
-                        botSystemPrompt = bot?.systemPrompt
-                            ?: "Return compact Android Generative UI controls.",
-                        botId = bot?.id ?: "focus",
-                        botName = bot?.name ?: "Focus"
-                    )
-                },
-                onExecuteAction = { action -> executor.execute(action) },
-                onClearHistory = { vm.clearChatHistory() },
-                onDismissOverlay = { showFloatingAssistant = false }
+        if (showHealthDashboardScreen) {
+            SystemHealthInferenceScreen(
+                viewModel = vm,
+                onBack = { showHealthDashboardScreen = false }
             )
         }
     }

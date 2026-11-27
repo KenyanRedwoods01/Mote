@@ -1,5 +1,7 @@
 package com.mote.app.ai
 
+import android.content.Context
+import android.media.AudioManager
 import com.mote.app.ai.ChatGenUiToolProtocol.boolVal
 import com.mote.app.ai.ChatGenUiToolProtocol.intVal
 import com.mote.app.ai.ChatGenUiToolProtocol.str
@@ -331,7 +333,8 @@ class AndroidAlarmManagerTool(
                 highlightAlarmId = res.targetAlarmId,
                 success = res.success,
                 alarmManagerMode = res.alarmManagerMode
-            )
+            ),
+            createdRecordId = res.targetAlarmId
         )
     }
 
@@ -354,7 +357,8 @@ class AndroidAlarmManagerTool(
                 highlightAlarmId = res.targetAlarmId,
                 success = res.success,
                 alarmManagerMode = res.alarmManagerMode
-            )
+            ),
+            createdRecordId = res.targetAlarmId
         )
     }
 
@@ -371,7 +375,8 @@ class AndroidAlarmManagerTool(
                 highlightAlarmId = null,
                 success = res.success,
                 alarmManagerMode = res.alarmManagerMode
-            )
+            ),
+            createdRecordId = res.targetAlarmId
         )
     }
 
@@ -388,7 +393,8 @@ class AndroidAlarmManagerTool(
                 highlightAlarmId = res.targetAlarmId,
                 success = res.success,
                 alarmManagerMode = res.alarmManagerMode
-            )
+            ),
+            createdRecordId = res.targetAlarmId
         )
     }
 
@@ -438,7 +444,7 @@ class CountdownTimerTool(
     override suspend fun execute(operation: String, args: JsonObject): GenUiToolResult {
         val normalized = operation.lowercase(Locale.US)
         val query = args.str("query") ?: args.str("label") ?: args.str("id")
-        val res = when (normalized) {
+        val (canonicalOp, res) = when (normalized) {
             "starttimer", "start_timer", "settimer", "set_timer", "createtimer", "create_timer", "addtimer", "timer", "countdown", "startcountdown", "clock_start_timer" -> {
                 val explicitSecs = args.intVal("durationSeconds")
                     ?: args.intVal("duration_seconds")
@@ -451,19 +457,34 @@ class CountdownTimerTool(
                     if (sum > 0) sum else 300
                 }
                 val label = args.str("label") ?: args.str("name") ?: "Countdown"
-                clockTools.startTimer(computedSecs, label)
+                "startTimer" to clockTools.startTimer(computedSecs, label)
             }
-            "pausetimer", "pause_timer", "stoptimer", "stop_timer" -> clockTools.controlTimer("pause", query)
-            "resumetimer", "resume_timer" -> clockTools.controlTimer("resume", query)
-            "resettimer", "reset_timer" -> clockTools.controlTimer("reset", query)
-            "deletetimer", "delete_timer", "canceltimer", "cancel_timer", "removetimer" -> clockTools.controlTimer("delete", query)
-            "gettimerstatus", "timerstatus", "timer_status" -> clockTools.getCountdownStatusSummary(query)
-            "clock_control_timer" -> clockTools.controlTimer(args.str("action") ?: "status", query)
-            else -> clockTools.getCountdownStatusSummary(query)
+            "pausetimer", "pause_timer", "stoptimer", "stop_timer" ->
+                "pauseTimer" to clockTools.controlTimer("pause", query)
+            "resumetimer", "resume_timer" ->
+                "resumeTimer" to clockTools.controlTimer("resume", query)
+            "resettimer", "reset_timer" ->
+                "resetTimer" to clockTools.controlTimer("reset", query)
+            "deletetimer", "delete_timer", "canceltimer", "cancel_timer", "removetimer" ->
+                "deleteTimer" to clockTools.controlTimer("delete", query)
+            "gettimerstatus", "timerstatus", "timer_status" ->
+                "getTimerStatus" to clockTools.getCountdownStatusSummary(query)
+            "clock_control_timer" -> {
+                val act = (args.str("action") ?: "status").lowercase(Locale.US)
+                val mappedOp = when (act) {
+                    "pause", "stop" -> "pauseTimer"
+                    "resume", "start" -> "resumeTimer"
+                    "reset" -> "resetTimer"
+                    "delete", "cancel", "remove" -> "deleteTimer"
+                    else -> "getTimerStatus"
+                }
+                mappedOp to clockTools.controlTimer(act, query)
+            }
+            else -> "getTimerStatus" to clockTools.getCountdownStatusSummary(query)
         }
         return GenUiToolResult(
             toolId = descriptor.id,
-            operation = operation,
+            operation = canonicalOp,
             success = res.success,
             feedback = res.summary,
             uiPart = InChatUiPart.ClockTimerPanel(
@@ -471,7 +492,8 @@ class CountdownTimerTool(
                 actionSummary = res.summary,
                 highlightTimerId = res.targetTimerId,
                 success = res.success
-            )
+            ),
+            createdRecordId = res.targetTimerId
         )
     }
 }
@@ -1579,12 +1601,202 @@ class AppControlCursorTool : GenUiTool {
 }
 
 /**
+ * Android AudioManager Volume & Ringer Control Tool.
+ * Executes real Android stream volume and ringer mode updates verified via [ToolExecutionEventObserver]'s
+ * BroadcastReceiver (`VOLUME_CHANGED_ACTION` / `RINGER_MODE_CHANGED_ACTION`).
+ */
+class AudioVolumeControlTool(
+    private val appContext: Context
+) : GenUiTool {
+
+    override val descriptor = RegisteredToolDescriptor(
+        id = GenUiToolRegistry.TOOL_AUDIO_VOLUME,
+        displayName = "Audio & Volume",
+        category = "System · AudioManager",
+        description = "Sets media/ring/alarm volume levels, adjusts volume up/down, mutes, and switches ringer mode with EventObserver verification.",
+        operations = listOf("setVolume", "adjustVolume", "setRingerMode", "getVolumeStatus"),
+        requiredPermissionLabels = emptyList()
+    )
+
+    override val supportedOperations: Set<String> = setOf(
+        "setvolume", "set_volume", "volume", "changevolume",
+        "adjustvolume", "adjust_volume", "volumeup", "volumedown",
+        "muteaudio", "mute_audio", "mute", "unmuteaudio", "unmute_audio", "unmute",
+        "setringermode", "set_ringer_mode", "ringer",
+        "getvolumestatus", "get_volume_status", "volumestatus"
+    )
+
+    private fun resolveStream(name: String?): Pair<Int, String> = when (name?.lowercase(Locale.US)?.trim()) {
+        "ring", "ringer" -> AudioManager.STREAM_RING to "Ring"
+        "alarm" -> AudioManager.STREAM_ALARM to "Alarm"
+        "notification", "notif" -> AudioManager.STREAM_NOTIFICATION to "Notification"
+        "voice", "call", "phone" -> AudioManager.STREAM_VOICE_CALL to "Call"
+        else -> AudioManager.STREAM_MUSIC to "Media"
+    }
+
+    override suspend fun execute(operation: String, args: JsonObject): GenUiToolResult {
+        val am = appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            ?: return GenUiToolResult(
+                toolId = descriptor.id,
+                operation = operation,
+                success = false,
+                feedback = "Android AudioManager unavailable on this device.",
+                uiPart = null
+            )
+
+        val op = operation.lowercase(Locale.US)
+        val (streamType, streamLabel) = resolveStream(args.str("stream"))
+        val maxVol = am.getStreamMaxVolume(streamType).coerceAtLeast(1)
+
+        return when (op) {
+            "setvolume", "set_volume", "volume", "changevolume" -> {
+                val pct = (args.intVal("percent") ?: args.intVal("level") ?: 50).coerceIn(0, 100)
+                val targetIndex = ((pct / 100f) * maxVol).toInt().coerceIn(0, maxVol)
+                val ok = runCatching {
+                    am.setStreamVolume(streamType, targetIndex, AudioManager.FLAG_SHOW_UI)
+                }.isSuccess
+                val actual = am.getStreamVolume(streamType)
+                val actualPct = ((actual * 100f) / maxVol).toInt()
+                val msg = if (ok) {
+                    "$streamLabel volume set to $actualPct% ($actual/$maxVol)"
+                } else {
+                    "Could not change $streamLabel volume (check Do Not Disturb policy)"
+                }
+                GenUiToolResult(
+                    toolId = descriptor.id,
+                    operation = "setVolume",
+                    success = ok,
+                    feedback = msg,
+                    uiPart = InChatUiPart.DeviceActionPanel(
+                        partId = nextPartId(),
+                        category = "AudioManager",
+                        title = "$streamLabel Volume",
+                        summary = msg,
+                        badge = "$actualPct%",
+                        success = ok,
+                        detailLines = listOf("Stream: $streamLabel", "Index: $actual / $maxVol", "Verified via BroadcastReceiver")
+                    )
+                )
+            }
+            "adjustvolume", "adjust_volume", "volumeup", "volumedown", "muteaudio", "mute_audio", "mute", "unmuteaudio", "unmute_audio", "unmute" -> {
+                val dir = when {
+                    op.contains("up") -> "up"
+                    op.contains("down") -> "down"
+                    op.contains("unmute") -> "unmute"
+                    op.contains("mute") -> "mute"
+                    else -> (args.str("direction") ?: "up").lowercase(Locale.US)
+                }
+                val adjustConst = when (dir) {
+                    "down", "lower", "decrease" -> AudioManager.ADJUST_LOWER
+                    "mute" -> AudioManager.ADJUST_MUTE
+                    "unmute" -> AudioManager.ADJUST_UNMUTE
+                    else -> AudioManager.ADJUST_RAISE
+                }
+                val ok = runCatching {
+                    am.adjustStreamVolume(streamType, adjustConst, AudioManager.FLAG_SHOW_UI)
+                }.isSuccess
+                val actual = am.getStreamVolume(streamType)
+                val actualPct = ((actual * 100f) / maxVol).toInt()
+                val msg = if (ok) {
+                    "$streamLabel volume adjusted ($dir) -> $actualPct% ($actual/$maxVol)"
+                } else {
+                    "Unable to adjust $streamLabel volume"
+                }
+                GenUiToolResult(
+                    toolId = descriptor.id,
+                    operation = "adjustVolume",
+                    success = ok,
+                    feedback = msg,
+                    uiPart = InChatUiPart.DeviceActionPanel(
+                        partId = nextPartId(),
+                        category = "AudioManager",
+                        title = "$streamLabel Volume ($dir)",
+                        summary = msg,
+                        badge = "$actualPct%",
+                        success = ok,
+                        detailLines = listOf("Action: $dir", "Level: $actual / $maxVol")
+                    )
+                )
+            }
+            "setringermode", "set_ringer_mode", "ringer" -> {
+                val modeStr = (args.str("mode") ?: "vibrate").lowercase(Locale.US)
+                val targetMode = when (modeStr) {
+                    "normal", "sound", "ring" -> AudioManager.RINGER_MODE_NORMAL
+                    "silent", "mute" -> AudioManager.RINGER_MODE_SILENT
+                    else -> AudioManager.RINGER_MODE_VIBRATE
+                }
+                val ok = runCatching { am.ringerMode = targetMode }.isSuccess
+                val currentLabel = when (am.ringerMode) {
+                    AudioManager.RINGER_MODE_SILENT -> "Silent"
+                    AudioManager.RINGER_MODE_VIBRATE -> "Vibrate"
+                    else -> "Normal"
+                }
+                val msg = if (ok) {
+                    "Ringer mode switched to $currentLabel"
+                } else {
+                    "Unable to switch ringer mode (grant Do Not Disturb access for Silent mode)"
+                }
+                GenUiToolResult(
+                    toolId = descriptor.id,
+                    operation = "setRingerMode",
+                    success = ok,
+                    feedback = msg,
+                    uiPart = InChatUiPart.DeviceActionPanel(
+                        partId = nextPartId(),
+                        category = "AudioManager",
+                        title = "Ringer Mode",
+                        summary = msg,
+                        badge = currentLabel,
+                        success = ok,
+                        detailLines = listOf("Active Ringer: $currentLabel")
+                    )
+                )
+            }
+            else -> {
+                val mediaCur = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+                val mediaMax = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                val ringCur = am.getStreamVolume(AudioManager.STREAM_RING)
+                val ringMax = am.getStreamMaxVolume(AudioManager.STREAM_RING).coerceAtLeast(1)
+                val alarmCur = am.getStreamVolume(AudioManager.STREAM_ALARM)
+                val alarmMax = am.getStreamMaxVolume(AudioManager.STREAM_ALARM).coerceAtLeast(1)
+                val ringerLabel = when (am.ringerMode) {
+                    AudioManager.RINGER_MODE_SILENT -> "Silent"
+                    AudioManager.RINGER_MODE_VIBRATE -> "Vibrate"
+                    else -> "Normal"
+                }
+                val summary = "Media ${(mediaCur * 100) / mediaMax}% · Ring ${(ringCur * 100) / ringMax}% · Alarm ${(alarmCur * 100) / alarmMax}% · Ringer: $ringerLabel"
+                GenUiToolResult(
+                    toolId = descriptor.id,
+                    operation = "getVolumeStatus",
+                    success = true,
+                    feedback = summary,
+                    uiPart = InChatUiPart.DeviceActionPanel(
+                        partId = nextPartId(),
+                        category = "AudioManager",
+                        title = "Audio & Volume Status",
+                        summary = summary,
+                        badge = ringerLabel,
+                        success = true,
+                        detailLines = listOf(
+                            "Media: $mediaCur/$mediaMax (${(mediaCur * 100) / mediaMax}%)",
+                            "Ring: $ringCur/$ringMax (${(ringCur * 100) / ringMax}%)",
+                            "Alarm: $alarmCur/$alarmMax (${(alarmCur * 100) / alarmMax}%)"
+                        )
+                    )
+                )
+            }
+        }
+    }
+}
+
+/**
  * Central Generative UI Tool Registry coordinating:
- * - Tool registration (AlarmManager, CountdownTimer, Stopwatch, Calendar, Camera, Screenshot, App Launcher, Navigation, Clipboard, Notes, Voice Relay, Wi-Fi/Network, App Control Cursor, GenUI)
+ * - Tool registration (AlarmManager, CountdownTimer, Stopwatch, Calendar, Camera, Screenshot, App Launcher, Navigation, Clipboard, Notes, Voice Relay, Wi-Fi/Network, Audio/Volume, App Control Cursor, GenUI)
  * - Explicit user authorization enforcement from Room preferences
  * - Room-persisted tool execution logs & aggregated usage statistics
  */
 class GenUiToolRegistry(
+    private val appContext: Context,
     private val clockTools: ClockToolsManager,
     private val calendarTools: CalendarToolsManager,
     private val deviceTools: com.mote.app.control.DeviceAutomationToolsManager,
@@ -1609,6 +1821,7 @@ class GenUiToolRegistry(
     val voiceCallTool: VoiceCallRelayTool = VoiceCallRelayTool(deviceTools, voiceCallBridge)
     val clipboardTool: ClipboardManagerTool = ClipboardManagerTool(clipboardTools)
     val networkTool: NetworkControlTool = NetworkControlTool(networkTools)
+    val audioVolumeTool: AudioVolumeControlTool = AudioVolumeControlTool(appContext)
     val appControlTool: AppControlCursorTool = AppControlCursorTool()
     val genUiWidgetTool: GenUiWidgetTool = GenUiWidgetTool()
 
@@ -1625,6 +1838,7 @@ class GenUiToolRegistry(
         voiceCallTool,
         clipboardTool,
         networkTool,
+        audioVolumeTool,
         appControlTool,
         genUiWidgetTool
     )
@@ -1678,6 +1892,7 @@ class GenUiToolRegistry(
         add(TOOL_VOICE_CALL)
         add(TOOL_CLIPBOARD)
         add(TOOL_NETWORK)
+        add(TOOL_AUDIO_VOLUME)
         add(TOOL_APP_CONTROL)
     }
 
@@ -1912,6 +2127,7 @@ class GenUiToolRegistry(
         const val TOOL_VOICE_CALL = "voice_call_relay"
         const val TOOL_CLIPBOARD = "clipboard_manager"
         const val TOOL_NETWORK = "network_wifi"
+        const val TOOL_AUDIO_VOLUME = "audio_volume"
         const val TOOL_APP_CONTROL = "app_control_cursor"
 
         val ALL_TOOL_IDS: Set<String> = setOf(
@@ -1928,6 +2144,7 @@ class GenUiToolRegistry(
             TOOL_VOICE_CALL,
             TOOL_CLIPBOARD,
             TOOL_NETWORK,
+            TOOL_AUDIO_VOLUME,
             TOOL_APP_CONTROL
         )
     }

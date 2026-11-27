@@ -476,10 +476,10 @@ class HybridAiRouter {
                                     val fnNames = chunkFnCalls.joinToString(", ") { it.name }
                                     emit(
                                         ChatStreamEvent.Delta(
-                                            accumulatedText = rawAccumulated.toString(),
+                                            accumulatedText = streamParser.currentVisibleText,
                                             elapsedMs = now - startMs,
                                             pendingToolHint = "Firebase Native Function Call: $fnNames...",
-                                            completedToolJsonBlocks = nativeCallJsonBlocks.toList(),
+                                            completedToolJsonBlocks = (nativeCallJsonBlocks + streamParser.feedChunk("").completedToolJsonBlocks).distinct(),
                                             newlyCompletedToolJsonBlocks = newlyAdded
                                         )
                                     )

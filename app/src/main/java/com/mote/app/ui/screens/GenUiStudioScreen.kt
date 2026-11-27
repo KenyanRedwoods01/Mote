@@ -76,7 +76,7 @@ fun GenUiStudioScreen(viewModel: MoteViewModel) {
     val context = LocalContext.current
     val aiState by viewModel.aiState.collectAsStateWithLifecycle()
     val llmConfig by viewModel.llmConfig.collectAsStateWithLifecycle()
-    val executor = remember(context) { DeviceActionExecutor(context) }
+    val executor = remember(context, viewModel.clockTools) { DeviceActionExecutor(context, viewModel.clockTools) }
 
     var customPrompt by remember { mutableStateOf("") }
     var inspectJson by remember { mutableStateOf(false) }
@@ -354,7 +354,15 @@ fun GenUiStudioScreen(viewModel: MoteViewModel) {
                                 )
                             }
                         } else {
-                            GenUiCardRenderer(result = state.result, onExecuteAction = { executor.execute(it) })
+                            GenUiCardRenderer(
+                                result = state.result,
+                                onExecuteAction = { action ->
+                                    val t0 = android.os.SystemClock.elapsedRealtime()
+                                    val ok = executor.execute(action)
+                                    viewModel.recordGenUiActionVerification(action, t0, ok)
+                                    ok
+                                }
+                            )
                         }
                     }
                 }

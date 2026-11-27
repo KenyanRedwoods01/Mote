@@ -150,6 +150,7 @@ class MoteViewModel(
     val liveBenchmark: StateFlow<LiveBenchmarkProgress?> = localModelManager.liveBenchmark
 
     // Live Clock, Calendar, Notes, Voice Call Relay & Generative UI Tool Registry state
+    val clockTools: com.mote.app.control.ClockToolsManager = localModelManager.clockTools
     val clockAlarms: StateFlow<List<ClockAlarmEntity>> = localModelManager.clockTools.alarms
     val clockTimers: StateFlow<List<CountdownTimerItem>> = localModelManager.clockTools.timers
     val clockStopwatch: StateFlow<StopwatchUiState> = localModelManager.clockTools.stopwatch
@@ -834,6 +835,15 @@ class MoteViewModel(
                     }
                 }
 
+                // Final safety sweep: extract and strip any residual raw JSON tool/GenUI blocks
+                val (sanitizedAnswer, extraJsonBlocks) = ChatGenUiToolProtocol.extractAndStripRawJsonArtifacts(cleanFinalAnswer)
+                cleanFinalAnswer = sanitizedAnswer
+                if (extraJsonBlocks.isNotEmpty()) {
+                    extraJsonBlocks.forEach { blk ->
+                        if (blk !in finalToolBlocks) finalToolBlocks.add(blk)
+                    }
+                }
+
                 // Step 2: Sequential Tool Chain Execution + Proof-of-Execution Verification
                 val decodedInvocations = finalToolBlocks.mapNotNull { rawJson ->
                     ChatGenUiToolProtocol.decodeToolInvocation(rawJson)
@@ -1055,6 +1065,11 @@ class MoteViewModel(
                 } else {
                     result.spec.title
                 }
+                val genUiPart = InChatUiPart.GenUiCardPart(
+                    partId = "genui_card_${System.nanoTime()}",
+                    spec = result.spec
+                )
+                _inChatUiPartsByText.value = _inChatUiPartsByText.value + (summary to listOf(genUiPart))
                 chatStore.appendMessage(
                     role = ChatRole.ASSISTANT,
                     botId = botId,
