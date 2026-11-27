@@ -9,3 +9,9 @@
 .externalNativeBuild
 .cxx
 *-debug.log
+.kotlin/
+.build-outputs/
+debug.keystore
+release.keystore
+release-artifacts/
+

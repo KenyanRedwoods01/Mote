@@ -218,12 +218,32 @@ Firebase AI Logic requires App Check. Mote automatically installs `DebugAppCheck
 # Build debug APK
 gradle :app:assembleDebug
 
+# Build release APK (R8 minified & resource-shrunk)
+gradle :app:assembleRelease
+
 # Run local unit tests (JVM)
 gradle :app:testDebugUnitTest
 
 # Run Firestore Security Rules tests (requires Firebase Emulator Suite)
 node --test firestore.test.js
 ```
+
+### 5. Automated GitHub Releases (Release APK)
+
+Mote includes a ready-to-run GitHub Actions workflow at [`.github/workflows/release.yml`](./.github/workflows/release.yml) that builds, `zipalign`s, signs, verifies, and publishes the Android Release APK (`mote-<tag>-release.apk` + `SHA256SUMS.txt`) directly to **GitHub Releases**:
+
+- **Trigger via Git tag:**
+  ```bash
+  git tag v1.0.0
+  git push origin v1.0.0
+  ```
+- **Or trigger manually:** Open **GitHub → Actions → Build & Publish Android Release APK → Run workflow**.
+- **Optional Production Signing Secrets** *(GitHub → Settings → Secrets and variables → Actions)*:
+  - `RELEASE_KEYSTORE_BASE64` — base64-encoded `.jks`/`.keystore` file
+  - `RELEASE_KEYSTORE_PASSWORD` — keystore password
+  - `RELEASE_KEY_ALIAS` — signing key alias
+  - `RELEASE_KEY_PASSWORD` — key password
+  - `GOOGLE_SERVICES_JSON_BASE64` *(optional)* — overrides `app/google-services.json` during CI if needed
 
 > **Tip for On-Device Gemini Nano Testing:** Run on an AICore-enabled Android device (e.g., Pixel 9 / 10 series or supported Android 14+ flagship), open **Model Hub → Firebase AI Logic Hybrid SDK**, and tap **Check AICore / Download Nano**. On emulators or non-AICore devices, the SDK automatically falls back to Cloud Gemini and displays `Cloud Fallback` in the dashboard.
 
@@ -288,7 +308,7 @@ Mote follows strict Google Play least-privilege principles:
 
 - **Hackathon Track:** `#BuildHybridAI` — **Android (Gemini Nano via Firebase AI Logic)**
 - **Demo Video (≤ 3 minutes, English, Public on YouTube):** `[Add your public YouTube demo link here]`
-- **Public Repository URL:** `[Add your public GitHub/GitLab repository URL here]`
+- **Public Repository URL:** `https://github.com/KenyanRedwoods01/Mote`
 - **Demo Walkthrough Suggested Flow (under 3 min):**
   1. Show **Model Hub → Firebase AI Logic Hybrid SDK & System Health & Inference Dashboard** (switching `OnDeviceConfig` modes, AICore Gemini Nano status check, live thermal/battery gauge, and adaptive provider explanation).
   2. Run a multi-step prompt in **Chat Hub** (e.g., *"Create a 7:30 AM alarm and start the stopwatch"* or *"Open Chrome, search Android AI news, and take a screenshot"*) and show the **Tool Execution Log** confirming `Execution Verified` via `EventObserver`.
