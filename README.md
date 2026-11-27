@@ -238,12 +238,12 @@ Mote includes a ready-to-run GitHub Actions workflow at [`.github/workflows/rele
   git push origin v1.0.0
   ```
 - **Or trigger manually:** Open **GitHub → Actions → Build & Publish Android Release APK → Run workflow**.
-- **Optional Production Signing Secrets** *(GitHub → Settings → Secrets and variables → Actions)*:
-  - `RELEASE_KEYSTORE_BASE64` — base64-encoded `.jks`/`.keystore` file
-  - `RELEASE_KEYSTORE_PASSWORD` — keystore password
-  - `RELEASE_KEY_ALIAS` — signing key alias
-  - `RELEASE_KEY_PASSWORD` — key password
-  - `GOOGLE_SERVICES_JSON_BASE64` *(optional)* — overrides `app/google-services.json` during CI if needed
+- **GitHub Actions Secrets** *(GitHub → Settings → Secrets and variables → Actions)*:
+  - `GOOGLE_SERVICES_JSON` *(required if `app/google-services.json` is not committed)* — raw contents of your Firebase `app/google-services.json` (or `GOOGLE_SERVICES_JSON_BASE64`)
+  - `RELEASE_KEYSTORE_BASE64` *(optional)* — base64-encoded `.jks`/`.keystore` file for production signing
+  - `RELEASE_KEYSTORE_PASSWORD` *(optional)* — keystore password
+  - `RELEASE_KEY_ALIAS` *(optional)* — signing key alias
+  - `RELEASE_KEY_PASSWORD` *(optional)* — key password
 
 > **Tip for On-Device Gemini Nano Testing:** Run on an AICore-enabled Android device (e.g., Pixel 9 / 10 series or supported Android 14+ flagship), open **Model Hub → Firebase AI Logic Hybrid SDK**, and tap **Check AICore / Download Nano**. On emulators or non-AICore devices, the SDK automatically falls back to Cloud Gemini and displays `Cloud Fallback` in the dashboard.
 
